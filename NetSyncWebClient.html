@@ -357,6 +357,14 @@
     transition: opacity .15s ease, transform .15s ease;
     pointer-events: none;
   }
+  .toast.has-link {
+    pointer-events: auto;
+  }
+  .toast a {
+    color: #8fb7ff;
+    margin-left: 8px;
+    white-space: nowrap;
+  }
   .toast.show {
     opacity: 1;
     transform: translateY(0);
@@ -458,6 +466,7 @@ const BRIDGE_URL_STORAGE_KEY = "styly-netsync-bridge-url";
 const BRIDGE_URL_HISTORY_KEY = "styly-netsync-bridge-url-history";
 const WATCHED_CLIENT_VARS_STORAGE_KEY = "styly-netsync-watched-client-vars";
 const MAX_BRIDGE_URL_HISTORY = 8;
+const BRIDGE_START_GUIDE_URL = "https://github.com/afjk/STYLY-NetSync-Custom-Console/blob/main/README.ja.md#%E8%B5%B7%E5%8B%95";
 let watchedClientVars = [];
 
 function esc(value) {
@@ -466,9 +475,18 @@ function esc(value) {
   return d.innerHTML;
 }
 
-function toast(message, isError = false, duration = 1800) {
+function toast(message, isError = false, duration = 1800, link = null) {
   const el = document.getElementById("toast");
   el.textContent = message;
+  el.classList.toggle("has-link", !!link);
+  if (link) {
+    const anchor = document.createElement("a");
+    anchor.href = link.href;
+    anchor.textContent = link.label;
+    anchor.target = "_blank";
+    anchor.rel = "noopener noreferrer";
+    el.appendChild(anchor);
+  }
   el.style.borderColor = isError ? "#7d3434" : "#303846";
   el.classList.add("show");
   clearTimeout(toast._timer);
@@ -635,7 +653,12 @@ function connect() {
   }
 
   if (!isBridgeUrlCandidate(url)) {
-    toast("Bridge Server URLを指定してください。GitHub PagesではBridge Serverは起動していません。", true, 5000);
+    toast(
+      "Bridge Server URLを指定してください。GitHub PagesではBridge Serverは起動していません。",
+      true,
+      8000,
+      { label: "起動方法", href: BRIDGE_START_GUIDE_URL }
+    );
     return;
   }
 
@@ -647,7 +670,12 @@ function connect() {
     requestSnapshot();
   };
   ws.onclose = () => setStatus(false);
-  ws.onerror = () => toast("Bridge Serverが見つかりません。先にBridge Serverを起動してからConnectしてください。", true, 6000);
+  ws.onerror = () => toast(
+    "Bridge Serverが見つかりません。先にBridge Serverを起動してからConnectしてください。",
+    true,
+    8000,
+    { label: "起動方法", href: BRIDGE_START_GUIDE_URL }
+  );
   ws.onmessage = event => handleMessage(JSON.parse(event.data));
 }
 
