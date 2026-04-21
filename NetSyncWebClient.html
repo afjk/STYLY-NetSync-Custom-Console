@@ -500,7 +500,7 @@ function getDefaultBridgeCandidates() {
   if (location.hostname && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
     defaults.push(`ws://${location.hostname}:8765`);
   }
-  defaults.push("ws://localhost:8765", "ws://127.0.0.1:8765");
+  defaults.push("ws://localhost:8765");
   return defaults;
 }
 
