@@ -56,7 +56,7 @@
   .brand {
     font-size: 16px;
     font-weight: 700;
-    color: #ff4d68;
+    color: #c7d2e0;
     white-space: nowrap;
   }
   .status {
@@ -169,9 +169,16 @@
     border: 0;
     background: transparent;
     color: #8f9aaa;
+    width: 22px;
+    height: 22px;
+    min-width: 22px;
     padding: 0;
-    min-width: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
   }
+  .watch-chip button:hover { background: #252d3a; color: #e8edf2; }
   .watched-value {
     max-width: 180px;
     overflow: hidden;
@@ -287,7 +294,7 @@
   }
   .inline-edit {
     display: grid;
-    grid-template-columns: minmax(120px, 1fr) auto;
+    grid-template-columns: minmax(120px, 1fr) auto auto;
     gap: 6px;
     align-items: center;
   }
@@ -371,7 +378,7 @@
 <body>
 <div class="app">
   <header class="topbar">
-    <div class="brand">STYLY NetSync</div>
+    <div class="brand">STYLY NetSync Console</div>
     <div class="url-tools">
       <input type="text" id="ws-url" value="" aria-label="Bridge URL">
       <button class="primary" onclick="connect()">Connect</button>
@@ -586,7 +593,7 @@ function renderWatchedClientVars() {
     return;
   }
   el.innerHTML = watchedClientVars
-    .map(name => `<span class="watch-chip"><span class="mono">${esc(name)}</span><button class="remove-watch-btn" data-var-name="${esc(name)}" title="Remove">x</button></span>`)
+    .map(name => `<span class="watch-chip"><span class="mono">${esc(name)}</span><button type="button" class="remove-watch-btn" data-var-name="${esc(name)}" title="Remove" aria-label="Remove ${esc(name)}">x</button></span>`)
     .join("");
 }
 
@@ -749,7 +756,8 @@ function renderGlobalVars() {
       <td>
         <div class="inline-edit">
           <input id="${inputId}" type="text" value="${esc(v.value)}">
-          <button class="global-var-set-btn" data-var-name="${esc(name)}" data-input-id="${esc(inputId)}">Set</button>
+          <button type="button" class="global-var-set-btn" data-var-name="${esc(name)}" data-input-id="${esc(inputId)}">Set</button>
+          <button type="button" class="global-var-clear-btn" data-var-name="${esc(name)}">Clear</button>
         </div>
       </td>
       <td class="mono">#${esc(v.lastWriter)}</td>
@@ -799,40 +807,70 @@ function initializeEditGuards() {
   });
 }
 
+function handleVariableAction(event) {
+  const removeButton = event.target.closest(".remove-watch-btn");
+  if (removeButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    removeWatchedClientVar(removeButton.dataset.varName);
+    return true;
+  }
+
+  const watchButton = event.target.closest(".watch-var-btn");
+  if (watchButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    watchClientVar(watchButton.dataset.varName);
+    return true;
+  }
+
+  const clientSetButton = event.target.closest(".client-var-set-btn");
+  if (clientSetButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    const input = document.getElementById(clientSetButton.dataset.inputId);
+    setClientVarValue(
+      Number(clientSetButton.dataset.clientNo),
+      clientSetButton.dataset.varName,
+      input?.value || ""
+    );
+    return true;
+  }
+
+  const clientClearButton = event.target.closest(".client-var-clear-btn");
+  if (clientClearButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    clearClientVarValue(Number(clientClearButton.dataset.clientNo), clientClearButton.dataset.varName);
+    return true;
+  }
+
+  const globalSetButton = event.target.closest(".global-var-set-btn");
+  if (globalSetButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    const input = document.getElementById(globalSetButton.dataset.inputId);
+    setGlobalVarValue(globalSetButton.dataset.varName, input?.value || "");
+    return true;
+  }
+
+  const globalClearButton = event.target.closest(".global-var-clear-btn");
+  if (globalClearButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    clearGlobalVarValue(globalClearButton.dataset.varName);
+    return true;
+  }
+
+  return false;
+}
+
 function initializeVariableActions() {
+  document.addEventListener("pointerdown", event => {
+    handleVariableAction(event);
+  });
   document.addEventListener("click", event => {
-    const removeButton = event.target.closest(".remove-watch-btn");
-    if (removeButton) {
-      event.preventDefault();
-      removeWatchedClientVar(removeButton.dataset.varName);
-      return;
-    }
-
-    const watchButton = event.target.closest(".watch-var-btn");
-    if (watchButton) {
-      event.preventDefault();
-      watchClientVar(watchButton.dataset.varName);
-      return;
-    }
-
-    const clientSetButton = event.target.closest(".client-var-set-btn");
-    if (clientSetButton) {
-      event.preventDefault();
-      const input = document.getElementById(clientSetButton.dataset.inputId);
-      setClientVarValue(
-        Number(clientSetButton.dataset.clientNo),
-        clientSetButton.dataset.varName,
-        input?.value || ""
-      );
-      return;
-    }
-
-    const globalSetButton = event.target.closest(".global-var-set-btn");
-    if (globalSetButton) {
-      event.preventDefault();
-      const input = document.getElementById(globalSetButton.dataset.inputId);
-      setGlobalVarValue(globalSetButton.dataset.varName, input?.value || "");
-    }
+    if (event.detail === 0) handleVariableAction(event);
   });
 }
 
@@ -887,7 +925,6 @@ function renderDetail() {
   html += detailKv("Type", mapping.stealth ? "stealth" : "standard");
   html += detailKv("Pose", pose.head ? "active" : "-");
   html += detailKv("Head", head ? `x ${head.x.toFixed(3)}, y ${head.y.toFixed(3)}, z ${head.z.toFixed(3)}` : "-");
-  html += `<div class="editor"><button onclick="requestClientDisconnect(${Number(cno)})">Disconnect from server</button></div>`;
   html += `<div class="vars"><h3>Client Variables</h3>`;
 
   const names = Object.keys(vars).sort();
@@ -900,15 +937,16 @@ function renderDetail() {
       const watched = watchedClientVars.includes(name);
       const inputId = `client-${cno}-var-value-${index}`;
       html += `<tr>
-        <td class="mono"><button class="watch-var-btn" data-var-name="${esc(name)}">${esc(name)}</button></td>
+        <td class="mono"><button type="button" class="watch-var-btn" data-var-name="${esc(name)}">${esc(name)}</button></td>
         <td>
           <div class="inline-edit">
             <input id="${inputId}" type="text" value="${esc(v.value)}">
-            <button class="client-var-set-btn" data-client-no="${esc(cno)}" data-var-name="${esc(name)}" data-input-id="${esc(inputId)}">Set</button>
+            <button type="button" class="client-var-set-btn" data-client-no="${esc(cno)}" data-var-name="${esc(name)}" data-input-id="${esc(inputId)}">Set</button>
+            <button type="button" class="client-var-clear-btn" data-client-no="${esc(cno)}" data-var-name="${esc(name)}">Clear</button>
           </div>
         </td>
         <td class="mono">#${esc(v.lastWriter)}</td>
-        <td><div class="table-actions"><button class="watch-var-btn" data-var-name="${esc(name)}">${watched ? "Watching" : "Watch"}</button></div></td>
+        <td><div class="table-actions"><button type="button" class="watch-var-btn" data-var-name="${esc(name)}">${watched ? "Watching" : "Watch"}</button></div></td>
       </tr>`;
     });
     html += "</tbody></table>";
@@ -1031,6 +1069,18 @@ function setGlobalVarValue(name, value) {
   toast("Global variable sent");
 }
 
+function clearGlobalVarValue(name) {
+  if (!ws || ws.readyState !== 1) {
+    toast("Not connected", true);
+    return;
+  }
+  if (!name) {
+    toast("Name required", true);
+    return;
+  }
+  setGlobalVarValue(name, "");
+}
+
 function setGlobalVar() {
   if (!ws || ws.readyState !== 1) {
     toast("Not connected", true);
@@ -1061,6 +1111,18 @@ function setClientVarValue(targetClientNo, name, value) {
   toast("Client variable sent");
 }
 
+function clearClientVarValue(targetClientNo, name) {
+  if (!ws || ws.readyState !== 1) {
+    toast("Not connected", true);
+    return;
+  }
+  if (!targetClientNo || !name) {
+    toast("Client and name required", true);
+    return;
+  }
+  setClientVarValue(targetClientNo, name, "");
+}
+
 function setClientVar(targetClientNo) {
   if (!ws || ws.readyState !== 1) {
     toast("Not connected", true);
@@ -1075,10 +1137,6 @@ function setClientVar(targetClientNo) {
   setClientVarValue(targetClientNo, name, value);
   document.getElementById("set-cv-name").value = "";
   document.getElementById("set-cv-value").value = "";
-}
-
-function requestClientDisconnect(targetClientNo) {
-  toast("Server-side client disconnect is not supported by the current NetSync protocol.", true);
 }
 
 function drawAvatars() {
