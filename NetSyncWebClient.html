@@ -769,9 +769,25 @@ function renderGlobalVars() {
   el.innerHTML = html;
 }
 
-function selectClient(cno) {
+function scrollSelectedParticipantIntoView() {
+  if (!selectedClientNo) return;
+  const grid = document.getElementById("participants-grid");
+  const row = Array.from(grid?.querySelectorAll(".participant-row") || [])
+    .find(item => String(item.dataset.clientNo) === String(selectedClientNo));
+  if (!row) return;
+  const gridRect = grid.getBoundingClientRect();
+  const rowRect = row.getBoundingClientRect();
+  if (rowRect.top < gridRect.top || rowRect.bottom > gridRect.bottom) {
+    row.scrollIntoView({ block: "center", inline: "nearest" });
+  }
+}
+
+function selectClient(cno, options = {}) {
   selectedClientNo = cno;
   renderAll();
+  if (options.scrollIntoList) {
+    requestAnimationFrame(scrollSelectedParticipantIntoView);
+  }
 }
 
 function initializeParticipantGridUi() {
@@ -803,7 +819,7 @@ function initializeMapUi() {
       .sort((a, b) => a.distance - b.distance)[0];
     if (!hit) return;
     event.preventDefault();
-    selectClient(hit.cno);
+    selectClient(hit.cno, { scrollIntoList: true });
   });
 }
 
