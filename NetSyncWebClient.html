@@ -1009,15 +1009,8 @@ function drawAvatars() {
   const ctx = canvas.getContext("2d");
   const W = canvas.width;
   const H = canvas.height;
-  ctx.clearRect(0, 0, W, H);
-
-  const points = [];
-  const activeClientNos = getListedClientNos();
-  for (const cno of activeClientNos) {
-    const d = clients[cno];
-    if (!d.head) continue;
-    points.push({ x: d.head.pos.x, z: d.head.pos.z });
-  }
+  const poseEntries = Object.entries(clients).filter(([, data]) => data?.head?.pos);
+  const points = poseEntries.map(([, data]) => ({ x: data.head.pos.x, z: data.head.pos.z }));
 
   ctx.fillStyle = "#0c1017";
   ctx.fillRect(0, 0, W, H);
@@ -1059,9 +1052,7 @@ function drawAvatars() {
   const toX = wx => W / 2 + (wx - centerX) * scale;
   const toY = wz => H / 2 - (wz - centerZ) * scale;
 
-  for (const cno of activeClientNos) {
-    const d = clients[cno];
-    if (!d.head) continue;
+  for (const [cno, d] of poseEntries) {
     const selected = String(cno) === String(selectedClientNo);
     const x = toX(d.head.pos.x);
     const y = toY(d.head.pos.z);
