@@ -110,7 +110,7 @@
     min-width: 0;
     min-height: 0;
     display: grid;
-    grid-template-rows: auto 1fr;
+    grid-template-rows: auto minmax(160px, 260px) auto 1fr;
     background: #11151d;
   }
   .section-head {
@@ -131,8 +131,45 @@
     display: flex;
     gap: 8px;
     align-items: center;
+    flex-wrap: wrap;
   }
   .filters input { width: 260px; }
+  .watch-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .watch-controls input { width: 180px; }
+  .watch-list {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .watch-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border: 1px solid #303846;
+    background: #151922;
+    border-radius: 999px;
+    color: #dbe4ee;
+    padding: 3px 8px;
+    font-size: 11px;
+  }
+  .watch-chip button {
+    border: 0;
+    background: transparent;
+    color: #8f9aaa;
+    padding: 0;
+    min-width: 16px;
+  }
+  .watched-value {
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   .grid-wrap {
     min-height: 0;
     overflow: auto;
@@ -200,6 +237,11 @@
     overflow: auto;
     padding: 14px;
   }
+  .side-global {
+    min-height: 0;
+    overflow: auto;
+    border-bottom: 1px solid #252b35;
+  }
   .kv {
     display: grid;
     grid-template-columns: 96px minmax(0, 1fr);
@@ -235,6 +277,7 @@
     padding: 12px 14px;
     border-top: 1px solid #252b35;
     background: #11151d;
+    display: none;
   }
   .global-head {
     display: flex;
@@ -325,6 +368,11 @@
         <h2>Participants</h2>
         <div class="filters">
           <input type="text" id="client-filter" placeholder="Filter" oninput="renderAll()">
+          <div class="watch-controls">
+            <input type="text" id="watch-var-name" placeholder="Client Variable">
+            <button onclick="addWatchedClientVar()">Watch</button>
+          </div>
+          <div class="watch-list" id="watch-var-list"></div>
           <button onclick="requestSnapshot()">Refresh</button>
         </div>
       </div>
@@ -333,24 +381,27 @@
         <div class="section-head"><h2>Map</h2><span id="map-caption" class="mono">0</span></div>
         <canvas id="avatar-canvas" width="1200" height="210"></canvas>
       </div>
-      <div class="global">
-        <div class="global-head"><h2>Global Variables</h2></div>
-        <div class="global-grid">
-          <input type="text" id="set-gv-name" placeholder="name">
-          <input type="text" id="set-gv-value" placeholder="value">
-          <button onclick="setGlobalVar()">Set</button>
-        </div>
-        <div class="global-list" id="global-vars-display"></div>
-      </div>
     </section>
 
     <aside class="side">
       <div class="section-head">
-        <h2 id="detail-title">Details</h2>
-        <button onclick="clearSelection()">Close</button>
+        <h2>Global Variables</h2>
+        <button onclick="requestSnapshot()">Refresh</button>
+      </div>
+      <div class="side-global">
+        <div class="global-grid" style="padding:12px 14px 0">
+          <input type="text" id="set-gv-name" placeholder="name">
+          <input type="text" id="set-gv-value" placeholder="value">
+          <button onclick="setGlobalVar()">Set</button>
+        </div>
+        <div class="global-list" id="global-vars-display" style="margin:12px 14px"></div>
+      </div>
+      <div class="section-head">
+        <h2 id="detail-title">Client Details</h2>
+        <button onclick="clearSelection()">Clear</button>
       </div>
       <div class="detail-body" id="detail-body">
-        <div class="detail-empty">Double-click a participant.</div>
+        <div class="detail-empty">Select a participant.</div>
       </div>
     </aside>
   </main>
@@ -368,7 +419,9 @@ let roomSummary = { roomClientCount: 0, poseClientCount: 0, stealthClientCount: 
 
 const BRIDGE_URL_STORAGE_KEY = "styly-netsync-bridge-url";
 const BRIDGE_URL_HISTORY_KEY = "styly-netsync-bridge-url-history";
+const WATCHED_CLIENT_VARS_STORAGE_KEY = "styly-netsync-watched-client-vars";
 const MAX_BRIDGE_URL_HISTORY = 8;
+let watchedClientVars = [];
 
 function esc(value) {
   const d = document.createElement("div");
@@ -446,6 +499,69 @@ function initializeBridgeUrlUi() {
   renderBridgeUrlCandidates();
 }
 
+function loadWatchedClientVars() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(WATCHED_CLIENT_VARS_STORAGE_KEY) || "[]");
+    watchedClientVars = Array.isArray(parsed)
+      ? parsed.map(name => String(name).trim()).filter(Boolean)
+      : [];
+  } catch {
+    watchedClientVars = [];
+  }
+  watchedClientVars = Array.from(new Set(watchedClientVars));
+}
+
+function saveWatchedClientVars() {
+  localStorage.setItem(WATCHED_CLIENT_VARS_STORAGE_KEY, JSON.stringify(watchedClientVars));
+}
+
+function addWatchedClientVar() {
+  const input = document.getElementById("watch-var-name");
+  const name = input.value.trim();
+  if (!name) {
+    toast("Variable name required", true);
+    return;
+  }
+  if (!watchedClientVars.includes(name)) {
+    watchedClientVars.push(name);
+    saveWatchedClientVars();
+  }
+  input.value = "";
+  renderAll();
+}
+
+function watchClientVar(name) {
+  const normalized = String(name || "").trim();
+  if (!normalized) return;
+  if (!watchedClientVars.includes(normalized)) {
+    watchedClientVars.push(normalized);
+    saveWatchedClientVars();
+    toast(`Watching ${normalized}`);
+  }
+  renderAll();
+}
+
+function removeWatchedClientVar(name) {
+  watchedClientVars = watchedClientVars.filter(item => item !== name);
+  saveWatchedClientVars();
+  renderAll();
+}
+
+function jsString(value) {
+  return JSON.stringify(String(value));
+}
+
+function renderWatchedClientVars() {
+  const el = document.getElementById("watch-var-list");
+  if (!watchedClientVars.length) {
+    el.innerHTML = "";
+    return;
+  }
+  el.innerHTML = watchedClientVars
+    .map(name => `<span class="watch-chip"><span class="mono">${esc(name)}</span><button title="Remove" onclick="removeWatchedClientVar(${jsString(name)})">x</button></span>`)
+    .join("");
+}
+
 function connect() {
   const url = normalizeBridgeUrl(document.getElementById("ws-url").value);
   if (!url) {
@@ -484,9 +600,18 @@ function requestSnapshot() {
 function getListedClientNos() {
   return Array.from(new Set([
     ...Object.keys(idMappings),
-    ...Object.keys(clients),
-    ...Object.keys(clientVars)
+    ...Object.keys(clients)
   ])).sort((a, b) => Number(a) - Number(b));
+}
+
+function pruneDisconnectedClientState() {
+  const active = new Set(getListedClientNos().map(String));
+  for (const cno of Object.keys(clientVars)) {
+    if (!active.has(String(cno))) delete clientVars[cno];
+  }
+  if (selectedClientNo && !active.has(String(selectedClientNo))) {
+    selectedClientNo = null;
+  }
 }
 
 function getClientFilter() {
@@ -500,7 +625,8 @@ function matchesClientFilter(cno) {
   const vars = clientVars[cno] || {};
   return String(cno).includes(filter)
     || (mapping.deviceId || "").toLowerCase().includes(filter)
-    || Object.keys(vars).some(name => name.toLowerCase().includes(filter));
+    || Object.keys(vars).some(name => name.toLowerCase().includes(filter))
+    || Object.values(vars).some(variable => String(variable?.value || "").toLowerCase().includes(filter));
 }
 
 function shortDeviceId(deviceId) {
@@ -543,27 +669,34 @@ function rowForClient(cno) {
     type: mapping.stealth ? "stealth" : "standard",
     hasPose: !!pose.head,
     variableCount: Object.keys(vars).length,
-    position: head ? `${head.x.toFixed(2)}, ${head.y.toFixed(2)}, ${head.z.toFixed(2)}` : "-"
+    position: head ? `${head.x.toFixed(2)}, ${head.y.toFixed(2)}, ${head.z.toFixed(2)}` : "-",
+    watchedValues: Object.fromEntries(watchedClientVars.map(name => [name, vars[name]?.value ?? "-"]))
   };
 }
 
 function renderParticipants() {
   const el = document.getElementById("participants-grid");
+  pruneDisconnectedClientState();
   const rows = getListedClientNos().filter(matchesClientFilter).map(rowForClient);
   if (rows.length === 0) {
     el.innerHTML = `<div class="empty">${getClientFilter() ? "No match" : "No participants"}</div>`;
     return;
   }
 
-  let html = "<table><thead><tr><th>Client</th><th>Device ID</th><th>Type</th><th>Pose</th><th>Vars</th><th>Position</th></tr></thead><tbody>";
+  const watchedHeaders = watchedClientVars.map(name => `<th>${esc(name)}</th>`).join("");
+  let html = `<table><thead><tr><th>Client</th><th>Device ID</th><th>Type</th><th>Pose</th><th>Vars</th>${watchedHeaders}<th>Position</th></tr></thead><tbody>`;
   for (const row of rows) {
     const selected = String(selectedClientNo) === String(row.cno) ? " selected" : "";
-    html += `<tr class="${selected}" ondblclick="selectClient('${esc(row.cno)}')">
+    const watchedCells = watchedClientVars
+      .map(name => `<td class="mono watched-value" title="${esc(row.watchedValues[name])}">${esc(row.watchedValues[name])}</td>`)
+      .join("");
+    html += `<tr class="${selected}" onclick="selectClient(${jsString(row.cno)})">
       <td class="mono">#${esc(row.cno)}</td>
       <td class="mono device" title="${esc(row.deviceId)}">${esc(shortDeviceId(row.deviceId))}</td>
       <td><span class="pill ${row.type === "stealth" ? "stealth" : ""}">${esc(row.type)}</span></td>
       <td><span class="pill ${row.hasPose ? "active" : ""}">${row.hasPose ? "active" : "-"}</span></td>
       <td class="mono">${row.variableCount}</td>
+      ${watchedCells}
       <td class="mono">${esc(row.position)}</td>
     </tr>`;
   }
@@ -600,9 +733,10 @@ function clearSelection() {
 function renderDetail() {
   const title = document.getElementById("detail-title");
   const el = document.getElementById("detail-body");
+  pruneDisconnectedClientState();
   if (!selectedClientNo || !getListedClientNos().includes(String(selectedClientNo))) {
-    title.textContent = "Details";
-    el.innerHTML = `<div class="detail-empty">Double-click a participant.</div>`;
+    title.textContent = "Client Details";
+    el.innerHTML = `<div class="detail-empty">Select a participant.</div>`;
     return;
   }
 
@@ -625,10 +759,16 @@ function renderDetail() {
   if (names.length === 0) {
     html += `<div class="empty">No variables</div>`;
   } else {
-    html += "<table><thead><tr><th>Name</th><th>Value</th><th>Writer</th></tr></thead><tbody>";
+    html += "<table><thead><tr><th>Name</th><th>Value</th><th>Writer</th><th></th></tr></thead><tbody>";
     for (const name of names) {
       const v = vars[name];
-      html += `<tr><td class="mono">${esc(name)}</td><td class="mono">${esc(v.value)}</td><td class="mono">#${esc(v.lastWriter)}</td></tr>`;
+      const watched = watchedClientVars.includes(name);
+      html += `<tr>
+        <td class="mono">${esc(name)}</td>
+        <td class="mono">${esc(v.value)}</td>
+        <td class="mono">#${esc(v.lastWriter)}</td>
+        <td><button onclick="watchClientVar(${jsString(name)})">${watched ? "Watching" : "Watch"}</button></td>
+      </tr>`;
     }
     html += "</tbody></table>";
   }
@@ -654,7 +794,9 @@ function detailKv(key, value) {
 }
 
 function renderAll() {
+  pruneDisconnectedClientState();
   renderOverview();
+  renderWatchedClientVars();
   renderParticipants();
   renderGlobalVars();
   renderDetail();
@@ -687,6 +829,7 @@ function handleMessage(msg) {
       idMappings = {};
       for (const m of msg.mappings || []) idMappings[m.clientNo] = m;
       roomSummary.roomClientCount = (msg.mappings || []).filter(m => !m.stealth).length;
+      pruneDisconnectedClientState();
       renderAll();
       break;
     case "global_var_sync":
@@ -710,6 +853,7 @@ function handleMessage(msg) {
       idMappings = {};
       for (const m of msg.idMappings || []) idMappings[m.clientNo] = m;
       roomSummary = { ...roomSummary, ...(msg.roomSummary || {}) };
+      pruneDisconnectedClientState();
       renderAll();
       break;
     case "rpc":
@@ -778,7 +922,9 @@ function drawAvatars() {
   ctx.clearRect(0, 0, W, H);
 
   const points = [];
-  for (const d of Object.values(clients)) {
+  const activeClientNos = getListedClientNos();
+  for (const cno of activeClientNos) {
+    const d = clients[cno];
     if (!d.head) continue;
     points.push({ x: d.head.pos.x, z: d.head.pos.z });
   }
@@ -823,7 +969,8 @@ function drawAvatars() {
   const toX = wx => W / 2 + (wx - centerX) * scale;
   const toY = wz => H / 2 - (wz - centerZ) * scale;
 
-  for (const [cno, d] of Object.entries(clients)) {
+  for (const cno of activeClientNos) {
+    const d = clients[cno];
     if (!d.head) continue;
     const selected = String(cno) === String(selectedClientNo);
     const x = toX(d.head.pos.x);
@@ -841,6 +988,8 @@ function drawAvatars() {
 
 renderAll();
 initializeBridgeUrlUi();
+loadWatchedClientVars();
+renderAll();
 </script>
 </body>
 </html>
