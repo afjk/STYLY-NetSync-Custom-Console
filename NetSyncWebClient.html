@@ -40,7 +40,7 @@
   input:focus, select:focus { border-color: #4f8cff; }
   .app {
     height: 100vh;
-    min-height: 0;
+    min-height: 100dvh;
     display: grid;
     grid-template-rows: auto auto 1fr;
   }
@@ -110,7 +110,7 @@
     min-height: 0;
     border-right: 1px solid #252b35;
     display: grid;
-    grid-template-rows: auto minmax(180px, 1fr) 260px;
+    grid-template-rows: auto minmax(180px, 1fr) 360px;
     overflow: hidden;
   }
   .side {
@@ -244,7 +244,8 @@
   #avatar-canvas {
     display: block;
     width: 100%;
-    height: 210px;
+    height: auto;
+    aspect-ratio: 1200 / 320;
     cursor: pointer;
   }
   .detail-empty {
@@ -378,9 +379,64 @@
     .side { min-height: 420px; border-top: 1px solid #252b35; }
   }
   @media (max-width: 620px) {
+    body { overflow: auto; }
+    .app {
+      height: auto;
+      min-height: 100dvh;
+      grid-template-rows: auto auto auto;
+    }
+    .topbar,
+    .section-head,
+    .global-head {
+      align-items: stretch;
+    }
     .url-tools, .global-grid, .editor-row { grid-template-columns: 1fr; }
+    #ws-url-candidates,
+    .status,
+    .watch-controls,
+    .watch-controls input,
+    .watch-controls button,
+    .global-grid button,
+    .editor-row button {
+      width: 100%;
+    }
     .filters { width: 100%; }
     .filters input { width: 100%; }
+    .main {
+      overflow: visible;
+    }
+    .panel,
+    .side {
+      overflow: visible;
+    }
+    .panel {
+      grid-template-rows: auto minmax(240px, auto) auto;
+    }
+    .side {
+      min-height: 0;
+      grid-template-rows: auto auto auto auto;
+    }
+    .grid-wrap,
+    .side-global,
+    .detail-body {
+      overflow: visible;
+    }
+    .map-wrap {
+      overflow-x: auto;
+    }
+    .kv {
+      grid-template-columns: 1fr;
+      gap: 4px;
+    }
+    .inline-edit {
+      grid-template-columns: 1fr;
+    }
+    .table-actions {
+      flex-wrap: wrap;
+    }
+    .col-position {
+      display: none;
+    }
   }
 </style>
 </head>
@@ -421,7 +477,7 @@
       <div class="grid-wrap" id="participants-grid"></div>
       <div class="map-wrap">
         <div class="section-head"><h2>Map</h2><span id="map-caption" class="mono">0</span></div>
-        <canvas id="avatar-canvas" width="1200" height="210"></canvas>
+        <canvas id="avatar-canvas" width="1200" height="320"></canvas>
       </div>
     </section>
 
@@ -795,7 +851,7 @@ function renderParticipants() {
   }
 
   const watchedHeaders = watchedClientVars.map(name => `<th>${esc(name)}</th>`).join("");
-  let html = `<table><thead><tr><th>Client</th><th>Device ID</th><th>Type</th><th>Pose</th><th>Vars</th>${watchedHeaders}<th>Position</th></tr></thead><tbody>`;
+  let html = `<table><thead><tr><th>Client</th><th>Device ID</th><th>Type</th><th>Pose</th><th>Vars</th>${watchedHeaders}<th class="col-position">Position</th></tr></thead><tbody>`;
   for (const row of rows) {
     const selected = String(selectedClientNo) === String(row.cno) ? " selected" : "";
     const watchedCells = watchedClientVars
@@ -808,7 +864,7 @@ function renderParticipants() {
       <td><span class="pill ${row.hasPose ? "active" : ""}">${row.hasPose ? "active" : "-"}</span></td>
       <td class="mono">${row.variableCount}</td>
       ${watchedCells}
-      <td class="mono">${esc(row.position)}</td>
+      <td class="mono col-position">${esc(row.position)}</td>
     </tr>`;
   }
   html += "</tbody></table>";

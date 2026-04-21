@@ -82,6 +82,13 @@ ws://<mac-ip>:8765
 
 Mac のファイアウォールで TCP `8080` と `8765` の着信を許可してください。
 
+別 PC やスマホから開くときの注意:
+
+- 必ず bridge が配信している `http://<mac-ip>:8080/` を直接開いてください
+- LAN 上の bridge に接続するときは GitHub Pages の URL (`https://afjk.github.io/...`) は使わないでください
+- `localhost` はアクセスしている端末自身を指すため、別端末からは Mac 上の bridge を指しません
+- HTTPS で開いたページからは、bridge の非 TLS WebSocket エンドポイント `ws://<mac-ip>:8765` への接続がブラウザにブロックされる場合があります
+
 ## NetSync Server を手動指定する
 
 ネットワーク構成によって discovery が届かない場合は、NetSync Server を明示指定できます。

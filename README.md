@@ -80,6 +80,13 @@ ws://<mac-ip>:8765
 
 Make sure the Mac firewall allows incoming TCP connections for ports `8080` and `8765`.
 
+Notes when opening the console from another PC or a phone:
+
+- Open the bridge-hosted page directly: `http://<mac-ip>:8080/`
+- Do not use the GitHub Pages URL (`https://afjk.github.io/...`) when connecting to a local bridge on your LAN
+- Do not use `localhost` from another device; `localhost` on a phone or another PC points to that device itself, not the Mac running the bridge
+- If the page is loaded over HTTPS, browsers usually block direct connections to the bridge's non-TLS WebSocket endpoint `ws://<mac-ip>:8765`
+
 ## Manual NetSync Server Address
 
 If discovery is not available across the current network, specify the NetSync server explicitly:
