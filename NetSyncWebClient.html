@@ -586,7 +586,7 @@ function renderWatchedClientVars() {
     return;
   }
   el.innerHTML = watchedClientVars
-    .map(name => `<span class="watch-chip"><span class="mono">${esc(name)}</span><button title="Remove" onclick="removeWatchedClientVar(${jsString(name)})">x</button></span>`)
+    .map(name => `<span class="watch-chip"><span class="mono">${esc(name)}</span><button class="remove-watch-btn" data-var-name="${esc(name)}" title="Remove">x</button></span>`)
     .join("");
 }
 
@@ -749,7 +749,7 @@ function renderGlobalVars() {
       <td>
         <div class="inline-edit">
           <input id="${inputId}" type="text" value="${esc(v.value)}">
-          <button onclick="setGlobalVarValue(${jsString(name)}, document.getElementById(${jsString(inputId)}).value)">Set</button>
+          <button class="global-var-set-btn" data-var-name="${esc(name)}" data-input-id="${esc(inputId)}">Set</button>
         </div>
       </td>
       <td class="mono">#${esc(v.lastWriter)}</td>
@@ -796,6 +796,43 @@ function initializeEditGuards() {
   });
   global.addEventListener("input", () => {
     preserveGlobalRenderUntil = Date.now() + 1500;
+  });
+}
+
+function initializeVariableActions() {
+  document.addEventListener("click", event => {
+    const removeButton = event.target.closest(".remove-watch-btn");
+    if (removeButton) {
+      event.preventDefault();
+      removeWatchedClientVar(removeButton.dataset.varName);
+      return;
+    }
+
+    const watchButton = event.target.closest(".watch-var-btn");
+    if (watchButton) {
+      event.preventDefault();
+      watchClientVar(watchButton.dataset.varName);
+      return;
+    }
+
+    const clientSetButton = event.target.closest(".client-var-set-btn");
+    if (clientSetButton) {
+      event.preventDefault();
+      const input = document.getElementById(clientSetButton.dataset.inputId);
+      setClientVarValue(
+        Number(clientSetButton.dataset.clientNo),
+        clientSetButton.dataset.varName,
+        input?.value || ""
+      );
+      return;
+    }
+
+    const globalSetButton = event.target.closest(".global-var-set-btn");
+    if (globalSetButton) {
+      event.preventDefault();
+      const input = document.getElementById(globalSetButton.dataset.inputId);
+      setGlobalVarValue(globalSetButton.dataset.varName, input?.value || "");
+    }
   });
 }
 
@@ -863,15 +900,15 @@ function renderDetail() {
       const watched = watchedClientVars.includes(name);
       const inputId = `client-${cno}-var-value-${index}`;
       html += `<tr>
-        <td class="mono"><button onclick="watchClientVar(${jsString(name)})">${esc(name)}</button></td>
+        <td class="mono"><button class="watch-var-btn" data-var-name="${esc(name)}">${esc(name)}</button></td>
         <td>
           <div class="inline-edit">
             <input id="${inputId}" type="text" value="${esc(v.value)}">
-            <button onclick="setClientVarValue(${Number(cno)}, ${jsString(name)}, document.getElementById(${jsString(inputId)}).value)">Set</button>
+            <button class="client-var-set-btn" data-client-no="${esc(cno)}" data-var-name="${esc(name)}" data-input-id="${esc(inputId)}">Set</button>
           </div>
         </td>
         <td class="mono">#${esc(v.lastWriter)}</td>
-        <td><div class="table-actions"><button onclick="watchClientVar(${jsString(name)})">${watched ? "Watching" : "Watch"}</button></div></td>
+        <td><div class="table-actions"><button class="watch-var-btn" data-var-name="${esc(name)}">${watched ? "Watching" : "Watch"}</button></div></td>
       </tr>`;
     });
     html += "</tbody></table>";
@@ -1112,6 +1149,7 @@ initializeBridgeUrlUi();
 loadWatchedClientVars();
 initializeParticipantGridUi();
 initializeEditGuards();
+initializeVariableActions();
 renderAll();
 </script>
 </body>
