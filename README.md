@@ -4,8 +4,11 @@ Browser-based management console for STYLY NetSync Server.
 
 This project uses a local Python bridge because the STYLY NetSync REST API is mainly for setting Network Variables and does not expose the full real-time room state. The bridge joins the NetSync room over ZeroMQ, caches live messages, and forwards them to the browser over WebSocket.
 
+GitHub Pages: https://afjk.github.io/STYLY-NetSync-Custom-Console/
+
 ## Files
 
+- `index.html` - GitHub Pages entry point
 - `NetSyncWebClient.html` - browser console UI
 - `bridge_server.py` - WebSocket bridge, NetSync discovery, and static web console server
 - `start_bridge_server.sh` - launcher script

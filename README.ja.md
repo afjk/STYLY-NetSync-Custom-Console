@@ -4,8 +4,11 @@ STYLY NetSync Server 用のブラウザベース管理コンソールです。
 
 STYLY NetSync の REST API は主に Network Variables の設定用途で、現在の room 状態をリアルタイムに取得する API はありません。そのため、このプロジェクトでは Python 製の bridge が ZeroMQ 経由で NetSync room に参加し、受信したリアルタイムメッセージを WebSocket でブラウザへ転送します。
 
+GitHub Pages: https://afjk.github.io/STYLY-NetSync-Custom-Console/
+
 ## ファイル構成
 
+- `index.html` - GitHub Pages 用の入口
 - `NetSyncWebClient.html` - ブラウザで開く管理コンソール UI
 - `bridge_server.py` - WebSocket bridge、NetSync discovery、Web UI 配信サーバー
 - `start_bridge_server.sh` - 起動スクリプト
