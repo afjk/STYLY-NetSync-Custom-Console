@@ -245,6 +245,7 @@
     display: block;
     width: 100%;
     height: 210px;
+    cursor: pointer;
   }
   .detail-empty {
     color: #687386;
@@ -451,6 +452,7 @@ let selectedClientNo = null;
 let roomSummary = { roomClientCount: 0, poseClientCount: 0, stealthClientCount: 0, webClientCount: 0, maxRecommendedClients: 100 };
 let preserveDetailRenderUntil = 0;
 let preserveGlobalRenderUntil = 0;
+let mapHitTargets = [];
 
 const BRIDGE_URL_STORAGE_KEY = "styly-netsync-bridge-url";
 const BRIDGE_URL_HISTORY_KEY = "styly-netsync-bridge-url-history";
@@ -782,6 +784,26 @@ function initializeParticipantGridUi() {
     if (!row) return;
     event.preventDefault();
     selectClient(row.dataset.clientNo);
+  });
+}
+
+function initializeMapUi() {
+  const canvas = document.getElementById("avatar-canvas");
+  canvas.addEventListener("pointerdown", event => {
+    if (!mapHitTargets.length) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = (event.clientX - rect.left) * (canvas.width / rect.width);
+    const y = (event.clientY - rect.top) * (canvas.height / rect.height);
+    const hit = mapHitTargets
+      .map(target => ({
+        ...target,
+        distance: Math.hypot(target.x - x, target.y - y)
+      }))
+      .filter(target => target.distance <= target.radius)
+      .sort((a, b) => a.distance - b.distance)[0];
+    if (!hit) return;
+    event.preventDefault();
+    selectClient(hit.cno);
   });
 }
 
@@ -1146,6 +1168,7 @@ function drawAvatars() {
   const H = canvas.height;
   const poseEntries = Object.entries(clients).filter(([, data]) => data?.head?.pos);
   const points = poseEntries.map(([, data]) => ({ x: data.head.pos.x, z: data.head.pos.z }));
+  mapHitTargets = [];
 
   ctx.fillStyle = "#0c1017";
   ctx.fillRect(0, 0, W, H);
@@ -1187,14 +1210,37 @@ function drawAvatars() {
   const toX = wx => W / 2 + (wx - centerX) * scale;
   const toY = wz => H / 2 - (wz - centerZ) * scale;
 
-  for (const [cno, d] of poseEntries) {
+  const drawEntries = [...poseEntries].sort(([a], [b]) => {
+    if (String(a) === String(selectedClientNo)) return 1;
+    if (String(b) === String(selectedClientNo)) return -1;
+    return Number(a) - Number(b);
+  });
+
+  for (const [cno, d] of drawEntries) {
     const selected = String(cno) === String(selectedClientNo);
     const x = toX(d.head.pos.x);
     const y = toY(d.head.pos.z);
-    ctx.fillStyle = selected ? "#ff4d68" : `hsl(${(Number(cno) * 47) % 360} 80% 62%)`;
+    const color = `hsl(${(Number(cno) * 47) % 360} 80% 62%)`;
+    mapHitTargets.push({ cno, x, y, radius: selected ? 24 : 18 });
+    if (selected) {
+      ctx.strokeStyle = "#f4c542";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(x, y, 15, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(244, 197, 66, .35)";
+      ctx.lineWidth = 8;
+      ctx.beginPath();
+      ctx.arc(x, y, 23, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.fillStyle = color;
     ctx.beginPath();
     ctx.arc(x, y, selected ? 8 : 6, 0, Math.PI * 2);
     ctx.fill();
+    ctx.strokeStyle = selected ? "#fff3bd" : "#0c1017";
+    ctx.lineWidth = selected ? 2 : 1;
+    ctx.stroke();
     ctx.fillStyle = "#e8edf2";
     ctx.font = "11px sans-serif";
     ctx.textAlign = "left";
@@ -1206,6 +1252,7 @@ renderAll();
 initializeBridgeUrlUi();
 loadWatchedClientVars();
 initializeParticipantGridUi();
+initializeMapUi();
 initializeEditGuards();
 initializeVariableActions();
 renderAll();
