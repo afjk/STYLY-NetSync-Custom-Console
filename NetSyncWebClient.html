@@ -442,6 +442,8 @@ let globalVars = {};
 let clientVars = {};
 let selectedClientNo = null;
 let roomSummary = { roomClientCount: 0, poseClientCount: 0, stealthClientCount: 0, webClientCount: 0, maxRecommendedClients: 100 };
+let preserveDetailRenderUntil = 0;
+let preserveGlobalRenderUntil = 0;
 
 const BRIDGE_URL_STORAGE_KEY = "styly-netsync-bridge-url";
 const BRIDGE_URL_HISTORY_KEY = "styly-netsync-bridge-url-history";
@@ -731,6 +733,7 @@ function renderParticipants() {
 }
 
 function renderGlobalVars() {
+  if (shouldPreserveGlobalRender()) return;
   const el = document.getElementById("global-vars-display");
   const keys = Object.keys(globalVars).sort();
   if (keys.length === 0) {
@@ -774,6 +777,40 @@ function initializeParticipantGridUi() {
   });
 }
 
+function initializeEditGuards() {
+  const detail = document.getElementById("detail-body");
+  detail.addEventListener("pointerdown", event => {
+    if (event.target.closest("input, button")) {
+      preserveDetailRenderUntil = Date.now() + 1500;
+    }
+  });
+  detail.addEventListener("input", () => {
+    preserveDetailRenderUntil = Date.now() + 1500;
+  });
+
+  const global = document.querySelector(".side-global");
+  global.addEventListener("pointerdown", event => {
+    if (event.target.closest("input, button")) {
+      preserveGlobalRenderUntil = Date.now() + 1500;
+    }
+  });
+  global.addEventListener("input", () => {
+    preserveGlobalRenderUntil = Date.now() + 1500;
+  });
+}
+
+function shouldPreserveDetailRender() {
+  const active = document.activeElement;
+  return Date.now() < preserveDetailRenderUntil
+    || !!active?.closest?.("#detail-body input, #detail-body textarea, #detail-body select");
+}
+
+function shouldPreserveGlobalRender() {
+  const active = document.activeElement;
+  return Date.now() < preserveGlobalRenderUntil
+    || !!active?.closest?.("#global-vars-display input, #global-vars-display textarea, #global-vars-display select");
+}
+
 function getParticipantRowAtPoint(x, y) {
   for (const row of document.querySelectorAll("#participants-grid .participant-row")) {
     const rect = row.getBoundingClientRect();
@@ -790,6 +827,7 @@ function clearSelection() {
 }
 
 function renderDetail() {
+  if (shouldPreserveDetailRender()) return;
   const title = document.getElementById("detail-title");
   const el = document.getElementById("detail-body");
   pruneDisconnectedClientState();
@@ -952,6 +990,7 @@ function setGlobalVarValue(name, value) {
     return;
   }
   ws.send(JSON.stringify({ action: "set_global_var", name, value }));
+  preserveGlobalRenderUntil = 0;
   toast("Global variable sent");
 }
 
@@ -981,6 +1020,7 @@ function setClientVarValue(targetClientNo, name, value) {
     return;
   }
   ws.send(JSON.stringify({ action: "set_client_var", targetClientNo, name, value }));
+  preserveDetailRenderUntil = 0;
   toast("Client variable sent");
 }
 
@@ -1071,6 +1111,7 @@ renderAll();
 initializeBridgeUrlUi();
 loadWatchedClientVars();
 initializeParticipantGridUi();
+initializeEditGuards();
 renderAll();
 </script>
 </body>
