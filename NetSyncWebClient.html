@@ -193,7 +193,7 @@
     color: #8f9aaa;
     font-weight: 600;
   }
-  tbody tr { cursor: default; }
+  tbody tr { cursor: pointer; }
   tbody tr:hover { background: #192130; }
   tbody tr.selected { background: #22304a; }
   .mono {
@@ -690,7 +690,7 @@ function renderParticipants() {
     const watchedCells = watchedClientVars
       .map(name => `<td class="mono watched-value" title="${esc(row.watchedValues[name])}">${esc(row.watchedValues[name])}</td>`)
       .join("");
-    html += `<tr class="${selected}" onclick="selectClient(${jsString(row.cno)})">
+    html += `<tr class="participant-row${selected}" data-client-no="${esc(row.cno)}">
       <td class="mono">#${esc(row.cno)}</td>
       <td class="mono device" title="${esc(row.deviceId)}">${esc(shortDeviceId(row.deviceId))}</td>
       <td><span class="pill ${row.type === "stealth" ? "stealth" : ""}">${esc(row.type)}</span></td>
@@ -723,6 +723,15 @@ function renderGlobalVars() {
 function selectClient(cno) {
   selectedClientNo = cno;
   renderAll();
+}
+
+function initializeParticipantGridUi() {
+  const grid = document.getElementById("participants-grid");
+  grid.addEventListener("click", event => {
+    const row = event.target.closest(".participant-row");
+    if (!row || !grid.contains(row)) return;
+    selectClient(row.dataset.clientNo);
+  });
 }
 
 function clearSelection() {
@@ -989,6 +998,7 @@ function drawAvatars() {
 renderAll();
 initializeBridgeUrlUi();
 loadWatchedClientVars();
+initializeParticipantGridUi();
 renderAll();
 </script>
 </body>
