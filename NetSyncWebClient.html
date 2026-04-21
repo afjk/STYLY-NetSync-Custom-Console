@@ -6,11 +6,15 @@
 <title>STYLY NetSync Console</title>
 <style>
   * { box-sizing: border-box; }
+  html, body {
+    height: 100%;
+  }
   body {
     margin: 0;
     font-family: "Segoe UI", system-ui, sans-serif;
     background: #0f1115;
     color: #e8edf2;
+    overflow: hidden;
   }
   button, input, select { font: inherit; }
   button {
@@ -35,7 +39,8 @@
   }
   input:focus, select:focus { border-color: #4f8cff; }
   .app {
-    min-height: 100vh;
+    height: 100vh;
+    min-height: 0;
     display: grid;
     grid-template-rows: auto auto 1fr;
   }
@@ -99,12 +104,14 @@
     min-height: 0;
     display: grid;
     grid-template-columns: minmax(520px, 1fr) 380px;
+    overflow: hidden;
   }
   .panel {
     min-height: 0;
     border-right: 1px solid #252b35;
     display: grid;
-    grid-template-rows: auto minmax(220px, 1fr) 260px auto;
+    grid-template-rows: auto minmax(180px, 1fr) 260px;
+    overflow: hidden;
   }
   .side {
     min-width: 0;
@@ -180,7 +187,7 @@
   }
   th, td {
     border-bottom: 1px solid #202631;
-    padding: 8px 10px;
+    padding: 11px 12px;
     text-align: left;
     font-size: 12px;
     white-space: nowrap;
@@ -193,7 +200,11 @@
     color: #8f9aaa;
     font-weight: 600;
   }
-  tbody tr { cursor: pointer; }
+  tbody tr {
+    cursor: pointer;
+    height: 42px;
+    user-select: none;
+  }
   tbody tr:hover { background: #192130; }
   tbody tr.selected { background: #22304a; }
   .mono {
@@ -221,6 +232,7 @@
     min-height: 0;
     border-top: 1px solid #252b35;
     background: #0c1017;
+    overflow: hidden;
   }
   #avatar-canvas {
     display: block;
@@ -272,6 +284,20 @@
     display: grid;
     grid-template-columns: 1fr 1fr auto;
     gap: 8px;
+  }
+  .inline-edit {
+    display: grid;
+    grid-template-columns: minmax(120px, 1fr) auto;
+    gap: 6px;
+    align-items: center;
+  }
+  .inline-edit input {
+    width: 100%;
+  }
+  .table-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
   }
   .global {
     padding: 12px 14px;
@@ -712,10 +738,20 @@ function renderGlobalVars() {
     return;
   }
   let html = "<table><thead><tr><th>Name</th><th>Value</th><th>Writer</th></tr></thead><tbody>";
-  for (const name of keys) {
+  keys.forEach((name, index) => {
     const v = globalVars[name];
-    html += `<tr><td class="mono">${esc(name)}</td><td class="mono">${esc(v.value)}</td><td class="mono">#${esc(v.lastWriter)}</td></tr>`;
-  }
+    const inputId = `global-var-value-${index}`;
+    html += `<tr>
+      <td class="mono">${esc(name)}</td>
+      <td>
+        <div class="inline-edit">
+          <input id="${inputId}" type="text" value="${esc(v.value)}">
+          <button onclick="setGlobalVarValue(${jsString(name)}, document.getElementById(${jsString(inputId)}).value)">Set</button>
+        </div>
+      </td>
+      <td class="mono">#${esc(v.lastWriter)}</td>
+    </tr>`;
+  });
   html += "</tbody></table>";
   el.innerHTML = html;
 }
@@ -727,11 +763,25 @@ function selectClient(cno) {
 
 function initializeParticipantGridUi() {
   const grid = document.getElementById("participants-grid");
-  grid.addEventListener("click", event => {
-    const row = event.target.closest(".participant-row");
-    if (!row || !grid.contains(row)) return;
+  grid.addEventListener("pointerdown", event => {
+    let row = event.target.closest(".participant-row");
+    if (!row || !grid.contains(row)) {
+      row = getParticipantRowAtPoint(event.clientX, event.clientY);
+    }
+    if (!row) return;
+    event.preventDefault();
     selectClient(row.dataset.clientNo);
   });
+}
+
+function getParticipantRowAtPoint(x, y) {
+  for (const row of document.querySelectorAll("#participants-grid .participant-row")) {
+    const rect = row.getBoundingClientRect();
+    if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+      return row;
+    }
+  }
+  return null;
 }
 
 function clearSelection() {
@@ -762,6 +812,7 @@ function renderDetail() {
   html += detailKv("Type", mapping.stealth ? "stealth" : "standard");
   html += detailKv("Pose", pose.head ? "active" : "-");
   html += detailKv("Head", head ? `x ${head.x.toFixed(3)}, y ${head.y.toFixed(3)}, z ${head.z.toFixed(3)}` : "-");
+  html += `<div class="editor"><button onclick="requestClientDisconnect(${Number(cno)})">Disconnect from server</button></div>`;
   html += `<div class="vars"><h3>Client Variables</h3>`;
 
   const names = Object.keys(vars).sort();
@@ -769,16 +820,22 @@ function renderDetail() {
     html += `<div class="empty">No variables</div>`;
   } else {
     html += "<table><thead><tr><th>Name</th><th>Value</th><th>Writer</th><th></th></tr></thead><tbody>";
-    for (const name of names) {
+    names.forEach((name, index) => {
       const v = vars[name];
       const watched = watchedClientVars.includes(name);
+      const inputId = `client-${cno}-var-value-${index}`;
       html += `<tr>
-        <td class="mono">${esc(name)}</td>
-        <td class="mono">${esc(v.value)}</td>
+        <td class="mono"><button onclick="watchClientVar(${jsString(name)})">${esc(name)}</button></td>
+        <td>
+          <div class="inline-edit">
+            <input id="${inputId}" type="text" value="${esc(v.value)}">
+            <button onclick="setClientVarValue(${Number(cno)}, ${jsString(name)}, document.getElementById(${jsString(inputId)}).value)">Set</button>
+          </div>
+        </td>
         <td class="mono">#${esc(v.lastWriter)}</td>
-        <td><button onclick="watchClientVar(${jsString(name)})">${watched ? "Watching" : "Watch"}</button></td>
+        <td><div class="table-actions"><button onclick="watchClientVar(${jsString(name)})">${watched ? "Watching" : "Watch"}</button></div></td>
       </tr>`;
-    }
+    });
     html += "</tbody></table>";
   }
 
@@ -889,6 +946,15 @@ function sendRpc(targetClientNo) {
   toast("RPC sent");
 }
 
+function setGlobalVarValue(name, value) {
+  if (!ws || ws.readyState !== 1) {
+    toast("Not connected", true);
+    return;
+  }
+  ws.send(JSON.stringify({ action: "set_global_var", name, value }));
+  toast("Global variable sent");
+}
+
 function setGlobalVar() {
   if (!ws || ws.readyState !== 1) {
     toast("Not connected", true);
@@ -900,10 +966,22 @@ function setGlobalVar() {
     toast("Name required", true);
     return;
   }
-  ws.send(JSON.stringify({ action: "set_global_var", name, value }));
+  setGlobalVarValue(name, value);
   document.getElementById("set-gv-name").value = "";
   document.getElementById("set-gv-value").value = "";
-  toast("Global variable sent");
+}
+
+function setClientVarValue(targetClientNo, name, value) {
+  if (!ws || ws.readyState !== 1) {
+    toast("Not connected", true);
+    return;
+  }
+  if (!targetClientNo || !name) {
+    toast("Client and name required", true);
+    return;
+  }
+  ws.send(JSON.stringify({ action: "set_client_var", targetClientNo, name, value }));
+  toast("Client variable sent");
 }
 
 function setClientVar(targetClientNo) {
@@ -917,10 +995,13 @@ function setClientVar(targetClientNo) {
     toast("Client and name required", true);
     return;
   }
-  ws.send(JSON.stringify({ action: "set_client_var", targetClientNo, name, value }));
+  setClientVarValue(targetClientNo, name, value);
   document.getElementById("set-cv-name").value = "";
   document.getElementById("set-cv-value").value = "";
-  toast("Client variable sent");
+}
+
+function requestClientDisconnect(targetClientNo) {
+  toast("Server-side client disconnect is not supported by the current NetSync protocol.", true);
 }
 
 function drawAvatars() {
