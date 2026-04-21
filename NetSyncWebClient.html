@@ -241,6 +241,32 @@
     background: #0c1017;
     overflow: hidden;
   }
+  .map-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    padding: 10px 14px;
+    border-bottom: 1px solid #202631;
+    background: #101621;
+  }
+  .map-tools .group {
+    display: inline-flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .map-tools input {
+    width: 86px;
+  }
+  .dummy-count {
+    color: #aab4c0;
+    font-size: 12px;
+  }
+  .dummy-count strong {
+    color: #ffd37a;
+    font-size: 14px;
+  }
   #avatar-canvas {
     display: block;
     width: 100%;
@@ -477,6 +503,23 @@
       <div class="grid-wrap" id="participants-grid"></div>
       <div class="map-wrap">
         <div class="section-head"><h2>Map</h2><span id="map-caption" class="mono">0</span></div>
+        <div class="map-tools">
+          <div class="group">
+            <span class="dummy-count">Dummies: <strong id="dummy-count">0</strong></span>
+          </div>
+          <div class="group">
+            <input type="number" id="dummy-spawn-count" value="20" min="1" placeholder="Count">
+            <input type="number" id="dummy-center-x" value="0" step="0.1" placeholder="Center X">
+            <input type="number" id="dummy-center-z" value="0" step="0.1" placeholder="Center Z">
+            <input type="number" id="dummy-radius" value="3" min="0" step="0.1" placeholder="Radius">
+          </div>
+          <div class="group">
+            <button type="button" onclick="spawnDummies()">Spawn</button>
+            <button type="button" onclick="spawnDummies(50)">+50</button>
+            <button type="button" onclick="spawnDummies(100)">+100</button>
+            <button type="button" onclick="despawnDummies()">Despawn All</button>
+          </div>
+        </div>
         <canvas id="avatar-canvas" width="1200" height="320"></canvas>
       </div>
     </section>
@@ -517,6 +560,10 @@ let roomSummary = { roomClientCount: 0, poseClientCount: 0, stealthClientCount: 
 let preserveDetailRenderUntil = 0;
 let preserveGlobalRenderUntil = 0;
 let mapHitTargets = [];
+let dummyCount = 0;
+let canvasView = { centerX: 0, centerZ: 0, scale: 40 };
+let mapCommandMarkers = [];
+let mapRedrawFrame = 0;
 
 const BRIDGE_URL_STORAGE_KEY = "styly-netsync-bridge-url";
 const BRIDGE_URL_HISTORY_KEY = "styly-netsync-bridge-url-history";
@@ -524,6 +571,10 @@ const WATCHED_CLIENT_VARS_STORAGE_KEY = "styly-netsync-watched-client-vars";
 const MAX_BRIDGE_URL_HISTORY = 8;
 const BRIDGE_START_GUIDE_URL = "https://github.com/afjk/STYLY-NetSync-Custom-Console/blob/main/README.ja.md#%E8%B5%B7%E5%8B%95";
 let watchedClientVars = [];
+
+function isConnected() {
+  return !!ws && ws.readyState === 1;
+}
 
 function esc(value) {
   const d = document.createElement("div");
@@ -749,6 +800,9 @@ function clearLiveState() {
   preserveDetailRenderUntil = 0;
   preserveGlobalRenderUntil = 0;
   mapHitTargets = [];
+  dummyCount = 0;
+  canvasView = { centerX: 0, centerZ: 0, scale: 40 };
+  mapCommandMarkers = [];
   renderAll();
 }
 
@@ -822,7 +876,8 @@ function renderOverview() {
   document.getElementById("stat-pose-clients").textContent = summary.poseClientCount;
   document.getElementById("stat-web-clients").textContent = summary.webClientCount;
   document.getElementById("stat-var-count").textContent = summary.varCount;
-  document.getElementById("map-caption").textContent = `${summary.poseClientCount}`;
+  document.getElementById("map-caption").textContent = `pose ${summary.poseClientCount} / dummy ${dummyCount}`;
+  document.getElementById("dummy-count").textContent = String(dummyCount);
 }
 
 function rowForClient(cno) {
@@ -933,23 +988,111 @@ function initializeParticipantGridUi() {
   });
 }
 
+function getDummySpawnConfig() {
+  return {
+    count: Number(document.getElementById("dummy-spawn-count")?.value || 0),
+    centerX: Number(document.getElementById("dummy-center-x")?.value || 0),
+    centerZ: Number(document.getElementById("dummy-center-z")?.value || 0),
+    radius: Number(document.getElementById("dummy-radius")?.value || 0)
+  };
+}
+
+function spawnDummies(countOverride = null) {
+  if (!isConnected()) {
+    toast("Not connected", true);
+    return;
+  }
+  const config = getDummySpawnConfig();
+  const count = countOverride == null ? config.count : Number(countOverride);
+  if (!(count > 0)) {
+    toast("Dummy count required", true);
+    return;
+  }
+  ws.send(JSON.stringify({
+    action: "spawn_dummies",
+    count,
+    centerX: config.centerX,
+    centerZ: config.centerZ,
+    radius: config.radius
+  }));
+  toast(`Spawn requested: ${count}`);
+}
+
+function despawnDummies() {
+  if (!isConnected()) {
+    toast("Not connected", true);
+    return;
+  }
+  ws.send(JSON.stringify({ action: "despawn_dummies" }));
+  toast("Despawn requested");
+}
+
+function chooseNiceStep(value) {
+  const safeValue = Math.max(value, 1e-6);
+  const exponent = Math.floor(Math.log10(safeValue));
+  const magnitude = 10 ** exponent;
+  const normalized = safeValue / magnitude;
+  const bucket = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  return bucket * magnitude;
+}
+
+function worldToCanvas(wx, wz, width, height) {
+  return {
+    x: width / 2 + (wx - canvasView.centerX) * canvasView.scale,
+    y: height / 2 - (wz - canvasView.centerZ) * canvasView.scale
+  };
+}
+
+function canvasToWorld(px, py, width, height) {
+  return {
+    x: canvasView.centerX + ((px - width / 2) / canvasView.scale),
+    z: canvasView.centerZ - ((py - height / 2) / canvasView.scale)
+  };
+}
+
+function addMapCommandMarker(x, z) {
+  mapCommandMarkers.push({ x, z, createdAt: performance.now() });
+  mapCommandMarkers = mapCommandMarkers.slice(-10);
+  scheduleMapRedraw();
+}
+
+function scheduleMapRedraw() {
+  if (mapRedrawFrame) return;
+  mapRedrawFrame = requestAnimationFrame(() => {
+    mapRedrawFrame = 0;
+    drawAvatars();
+  });
+}
+
+function findMapHitTarget(x, y) {
+  return mapHitTargets
+    .map(target => ({
+      ...target,
+      distance: Math.hypot(target.x - x, target.y - y)
+    }))
+    .filter(target => target.distance <= target.radius)
+    .sort((a, b) => a.distance - b.distance)[0] || null;
+}
+
 function initializeMapUi() {
   const canvas = document.getElementById("avatar-canvas");
   canvas.addEventListener("pointerdown", event => {
-    if (!mapHitTargets.length) return;
     const rect = canvas.getBoundingClientRect();
     const x = (event.clientX - rect.left) * (canvas.width / rect.width);
     const y = (event.clientY - rect.top) * (canvas.height / rect.height);
-    const hit = mapHitTargets
-      .map(target => ({
-        ...target,
-        distance: Math.hypot(target.x - x, target.y - y)
-      }))
-      .filter(target => target.distance <= target.radius)
-      .sort((a, b) => a.distance - b.distance)[0];
-    if (!hit) return;
+    const hit = findMapHitTarget(x, y);
+    if (hit) {
+      event.preventDefault();
+      selectClient(hit.cno, { scrollIntoList: true });
+      return;
+    }
+    if (!dummyCount || !isConnected()) return;
+
+    const world = canvasToWorld(x, y, canvas.width, canvas.height);
+    const action = event.shiftKey ? "add_waypoint" : "move_dummies_to";
+    ws.send(JSON.stringify({ action, x: world.x, z: world.z }));
+    addMapCommandMarker(world.x, world.z);
     event.preventDefault();
-    selectClient(hit.cno, { scrollIntoList: true });
   });
 }
 
@@ -1178,6 +1321,7 @@ function handleMessage(msg) {
     }
     case "bridge_status":
       roomSummary = { ...roomSummary, ...(msg.roomSummary || {}) };
+      dummyCount = Number(msg.dummyCount || 0);
       renderAll();
       break;
     case "id_mapping":
@@ -1208,7 +1352,12 @@ function handleMessage(msg) {
       idMappings = {};
       for (const m of msg.idMappings || []) idMappings[m.clientNo] = m;
       roomSummary = { ...roomSummary, ...(msg.roomSummary || {}) };
+      dummyCount = Number(msg.dummyCount || 0);
       pruneDisconnectedClientState();
+      renderAll();
+      break;
+    case "dummy_status":
+      dummyCount = Number(msg.count || 0);
       renderAll();
       break;
     case "rpc":
@@ -1315,54 +1464,174 @@ function setClientVar(targetClientNo) {
   document.getElementById("set-cv-value").value = "";
 }
 
-function drawAvatars() {
-  const canvas = document.getElementById("avatar-canvas");
-  const ctx = canvas.getContext("2d");
-  const W = canvas.width;
-  const H = canvas.height;
-  const poseEntries = Object.entries(clients).filter(([, data]) => data?.head?.pos);
-  const points = poseEntries.map(([, data]) => ({ x: data.head.pos.x, z: data.head.pos.z }));
-  mapHitTargets = [];
+function collectMapBoundsPoints() {
+  const points = [];
+  for (const pose of Object.values(clients)) {
+    const head = pose?.head?.pos;
+    if (!head) continue;
+    points.push({ x: head.x, z: head.z });
+    if (pose.right?.relPos) {
+      points.push({ x: head.x + pose.right.relPos.x, z: head.z + pose.right.relPos.z });
+    }
+    if (pose.left?.relPos) {
+      points.push({ x: head.x + pose.left.relPos.x, z: head.z + pose.left.relPos.z });
+    }
+  }
+  return points;
+}
 
-  ctx.fillStyle = "#0c1017";
-  ctx.fillRect(0, 0, W, H);
+function drawGrid(ctx, width, height, pixelStep = null) {
   ctx.strokeStyle = "#1d2635";
   ctx.lineWidth = 1;
-  for (let x = 0; x <= W; x += 40) {
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, H);
-    ctx.stroke();
-  }
-  for (let y = 0; y <= H; y += 40) {
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(W, y);
-    ctx.stroke();
-  }
-
-  if (points.length === 0) {
-    ctx.fillStyle = "#687386";
-    ctx.font = "12px sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText("No pose", W / 2, H / 2);
+  if (pixelStep != null) {
+    for (let x = 0; x <= width; x += pixelStep) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+      ctx.stroke();
+    }
+    for (let y = 0; y <= height; y += pixelStep) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+      ctx.stroke();
+    }
     return;
   }
 
-  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-  for (const p of points) {
-    minX = Math.min(minX, p.x);
-    maxX = Math.max(maxX, p.x);
-    minZ = Math.min(minZ, p.z);
-    maxZ = Math.max(maxZ, p.z);
+  const stepWorld = chooseNiceStep(40 / canvasView.scale);
+  const worldHalfWidth = width / (2 * canvasView.scale);
+  const worldHalfHeight = height / (2 * canvasView.scale);
+  const minWorldX = canvasView.centerX - worldHalfWidth;
+  const maxWorldX = canvasView.centerX + worldHalfWidth;
+  const minWorldZ = canvasView.centerZ - worldHalfHeight;
+  const maxWorldZ = canvasView.centerZ + worldHalfHeight;
+
+  for (let wx = Math.floor(minWorldX / stepWorld) * stepWorld; wx <= maxWorldX; wx += stepWorld) {
+    const point = worldToCanvas(wx, canvasView.centerZ, width, height);
+    ctx.beginPath();
+    ctx.moveTo(point.x, 0);
+    ctx.lineTo(point.x, height);
+    ctx.stroke();
   }
+  for (let wz = Math.floor(minWorldZ / stepWorld) * stepWorld; wz <= maxWorldZ; wz += stepWorld) {
+    const point = worldToCanvas(canvasView.centerX, wz, width, height);
+    ctx.beginPath();
+    ctx.moveTo(0, point.y);
+    ctx.lineTo(width, point.y);
+    ctx.stroke();
+  }
+}
+
+function drawOriginMarker(ctx, width, height) {
+  const origin = worldToCanvas(0, 0, width, height);
+  ctx.strokeStyle = "rgba(255,255,255,.65)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(origin.x - 8, origin.y);
+  ctx.lineTo(origin.x + 8, origin.y);
+  ctx.moveTo(origin.x, origin.y - 8);
+  ctx.lineTo(origin.x, origin.y + 8);
+  ctx.stroke();
+}
+
+function drawScaleBar(ctx, width, height) {
+  const distance = chooseNiceStep(110 / canvasView.scale);
+  const px = distance * canvasView.scale;
+  const x = 18;
+  const y = height - 18;
+  ctx.strokeStyle = "#dbe4ee";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x + px, y);
+  ctx.moveTo(x, y - 6);
+  ctx.lineTo(x, y + 6);
+  ctx.moveTo(x + px, y - 6);
+  ctx.lineTo(x + px, y + 6);
+  ctx.stroke();
+  ctx.fillStyle = "#dbe4ee";
+  ctx.font = "11px sans-serif";
+  ctx.textAlign = "left";
+  ctx.fillText(`${distance.toFixed(distance >= 10 ? 0 : 1)} m`, x, y - 9);
+}
+
+function drawMapCommandFeedback(ctx, width, height) {
+  const now = performance.now();
+  mapCommandMarkers = mapCommandMarkers.filter(marker => now - marker.createdAt < 5000);
+  if (!mapCommandMarkers.length) return;
+
+  for (const marker of mapCommandMarkers) {
+    const elapsed = now - marker.createdAt;
+    const progress = elapsed / 5000;
+    const alpha = 1 - progress;
+    const point = worldToCanvas(marker.x, marker.z, width, height);
+    const ringRadius = 10 + progress * 32;
+
+    ctx.strokeStyle = `rgba(255, 86, 86, ${0.75 * alpha})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, ringRadius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.strokeStyle = `rgba(255, 86, 86, ${alpha})`;
+    ctx.beginPath();
+    ctx.moveTo(point.x - 7, point.y);
+    ctx.lineTo(point.x + 7, point.y);
+    ctx.moveTo(point.x, point.y - 7);
+    ctx.lineTo(point.x, point.y + 7);
+    ctx.stroke();
+  }
+
+  scheduleMapRedraw();
+}
+
+function drawAvatars() {
+  const canvas = document.getElementById("avatar-canvas");
+  const ctx = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+  const poseEntries = Object.entries(clients).filter(([, data]) => data?.head?.pos);
+  const boundsPoints = collectMapBoundsPoints();
+  mapHitTargets = [];
+
+  ctx.fillStyle = "#0c1017";
+  ctx.fillRect(0, 0, width, height);
+
+  if (!boundsPoints.length) {
+    canvasView = { centerX: 0, centerZ: 0, scale: 40 };
+    drawGrid(ctx, width, height, 40);
+    drawOriginMarker(ctx, width, height);
+    drawMapCommandFeedback(ctx, width, height);
+    ctx.fillStyle = "#687386";
+    ctx.font = "12px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("No clients", width / 2, height / 2);
+    return;
+  }
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (const point of boundsPoints) {
+    minX = Math.min(minX, point.x);
+    maxX = Math.max(maxX, point.x);
+    minZ = Math.min(minZ, point.z);
+    maxZ = Math.max(maxZ, point.z);
+  }
+
   const rangeX = Math.max(maxX - minX, 2);
   const rangeZ = Math.max(maxZ - minZ, 2);
-  const centerX = (minX + maxX) / 2;
-  const centerZ = (minZ + maxZ) / 2;
-  const scale = Math.min((W * 0.78) / rangeX, (H * 0.72) / rangeZ);
-  const toX = wx => W / 2 + (wx - centerX) * scale;
-  const toY = wz => H / 2 - (wz - centerZ) * scale;
+  canvasView = {
+    centerX: (minX + maxX) / 2,
+    centerZ: (minZ + maxZ) / 2,
+    scale: Math.max(1, Math.min((width * 0.8) / rangeX, (height * 0.8) / rangeZ))
+  };
+
+  drawGrid(ctx, width, height);
+  drawOriginMarker(ctx, width, height);
+  drawScaleBar(ctx, width, height);
 
   const drawEntries = [...poseEntries].sort(([a], [b]) => {
     if (String(a) === String(selectedClientNo)) return 1;
@@ -1370,27 +1639,49 @@ function drawAvatars() {
     return Number(a) - Number(b);
   });
 
-  for (const [cno, d] of drawEntries) {
+  for (const [cno, pose] of drawEntries) {
     const selected = String(cno) === String(selectedClientNo);
-    const x = toX(d.head.pos.x);
-    const y = toY(d.head.pos.z);
+    const headPoint = worldToCanvas(pose.head.pos.x, pose.head.pos.z, width, height);
     const color = `hsl(${(Number(cno) * 47) % 360} 80% 62%)`;
-    mapHitTargets.push({ cno, x, y, radius: selected ? 24 : 18 });
+    mapHitTargets.push({ cno, x: headPoint.x, y: headPoint.y, radius: selected ? 24 : 18 });
+
+    for (const handKey of ["right", "left"]) {
+      const hand = pose[handKey]?.relPos;
+      if (!hand) continue;
+      const handPoint = worldToCanvas(
+        pose.head.pos.x + hand.x,
+        pose.head.pos.z + hand.z,
+        width,
+        height
+      );
+      ctx.strokeStyle = "rgba(232, 237, 242, 0.25)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(headPoint.x, headPoint.y);
+      ctx.lineTo(handPoint.x, handPoint.y);
+      ctx.stroke();
+      ctx.fillStyle = "rgba(232, 237, 242, 0.55)";
+      ctx.beginPath();
+      ctx.arc(handPoint.x, handPoint.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
     if (selected) {
       ctx.strokeStyle = "#f4c542";
       ctx.lineWidth = 4;
       ctx.beginPath();
-      ctx.arc(x, y, 15, 0, Math.PI * 2);
+      ctx.arc(headPoint.x, headPoint.y, 15, 0, Math.PI * 2);
       ctx.stroke();
       ctx.strokeStyle = "rgba(244, 197, 66, .35)";
       ctx.lineWidth = 8;
       ctx.beginPath();
-      ctx.arc(x, y, 23, 0, Math.PI * 2);
+      ctx.arc(headPoint.x, headPoint.y, 23, 0, Math.PI * 2);
       ctx.stroke();
     }
+
     ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.arc(x, y, selected ? 8 : 6, 0, Math.PI * 2);
+    ctx.arc(headPoint.x, headPoint.y, selected ? 8 : 6, 0, Math.PI * 2);
     ctx.fill();
     ctx.strokeStyle = selected ? "#fff3bd" : "#0c1017";
     ctx.lineWidth = selected ? 2 : 1;
@@ -1398,8 +1689,10 @@ function drawAvatars() {
     ctx.fillStyle = "#e8edf2";
     ctx.font = "11px sans-serif";
     ctx.textAlign = "left";
-    ctx.fillText(`#${cno}`, x + 9, y + 4);
+    ctx.fillText(`#${cno}`, headPoint.x + 9, headPoint.y + 4);
   }
+
+  drawMapCommandFeedback(ctx, width, height);
 }
 
 renderAll();
