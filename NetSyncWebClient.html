@@ -629,9 +629,23 @@ function disconnect() {
   if (ws) ws.close();
 }
 
+function clearLiveState() {
+  clients = {};
+  idMappings = {};
+  globalVars = {};
+  clientVars = {};
+  selectedClientNo = null;
+  roomSummary = { roomClientCount: 0, poseClientCount: 0, stealthClientCount: 0, webClientCount: 0, maxRecommendedClients: 100 };
+  preserveDetailRenderUntil = 0;
+  preserveGlobalRenderUntil = 0;
+  mapHitTargets = [];
+  renderAll();
+}
+
 function requestSnapshot() {
   if (!ws || ws.readyState !== 1) {
-    toast("Not connected", true);
+    clearLiveState();
+    toast("Display cleared");
     return;
   }
   preserveDetailRenderUntil = 0;
