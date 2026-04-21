@@ -11,10 +11,13 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
+import math
 from pathlib import Path
+import random
 import socket
 import struct
 import threading
@@ -48,12 +51,22 @@ MSG_CLIENT_VAR_SET = 9
 MSG_CLIENT_VAR_SYNC = 10
 
 POSE_FLAG_STEALTH = 1 << 0
+POSE_FLAG_PHYSICAL_VALID = 1 << 1
+POSE_FLAG_HEAD_VALID = 1 << 2
+POSE_FLAG_RIGHT_VALID = 1 << 3
+POSE_FLAG_LEFT_VALID = 1 << 4
+POSE_FLAG_VIRTUALS_VALID = 1 << 5
 ENCODING_FLAGS_DEFAULT = 0x1F
 DISCOVERY_REQUEST = "STYLY-NETSYNC-DISCOVER"
 DISCOVERY_RESPONSE_PREFIX = "STYLY-NETSYNC"
 DEFAULT_SERVER_DISCOVERY_PORT = 9999
 DEFAULT_HTTP_PORT = 8080
 WEB_CLIENT_FILENAME = "NetSyncWebClient.html"
+DUMMY_SEND_INTERVAL_SEC = 0.1
+DUMMY_HEAD_POS_SCALE = 0.01
+DUMMY_REL_POS_SCALE = 0.005
+DUMMY_PHYSICAL_DELTA_SCALE = 0.01
+DUMMY_YAW_SCALE = 0.1
 
 
 def ensure_runtime_dependencies():
@@ -96,6 +109,105 @@ def serialize_stealth_handshake(device_id: str) -> bytes:
     buf.append(POSE_FLAG_STEALTH)
     buf.append(ENCODING_FLAGS_DEFAULT)
     buf.append(0)
+    return bytes(buf)
+
+
+def euler_to_quat(yaw_rad: float) -> tuple[float, float, float, float]:
+    half = yaw_rad * 0.5
+    return 0.0, math.sin(half), 0.0, math.cos(half)
+
+
+def quantize_s16(value: float, scale: float) -> int:
+    quantized = int(round(value / scale))
+    return max(-(1 << 15), min((1 << 15) - 1, quantized))
+
+
+def quantize_s24(value: float, scale: float) -> int:
+    quantized = int(round(value / scale))
+    return max(-(1 << 23), min((1 << 23) - 1, quantized))
+
+
+def pack_int24_le(buf: bytearray, value: int) -> None:
+    raw = value & 0xFFFFFF
+    buf.extend((raw & 0xFF, (raw >> 8) & 0xFF, (raw >> 16) & 0xFF))
+
+
+def compress_quat_smallest_three(qx: float, qy: float, qz: float, qw: float) -> int:
+    components = [qx, qy, qz, qw]
+    largest_index = max(range(4), key=lambda index: abs(components[index]))
+    if components[largest_index] < 0.0:
+        components = [-value for value in components]
+
+    max_component = 1.0 / math.sqrt(2.0)
+    packed = largest_index << 30
+    remaining = [components[index] for index in range(4) if index != largest_index]
+    for shift, value in zip((20, 10, 0), remaining):
+        clamped = max(-max_component, min(max_component, value))
+        normalized = (clamped + max_component) / (2.0 * max_component)
+        packed |= int(round(normalized * 1023.0)) << shift
+    return packed
+
+
+def serialize_avatar_transform(device_id: str,
+                               head_pos: tuple[float, float, float],
+                               head_yaw_rad: float,
+                               right_rel: tuple[float, float, float],
+                               left_rel: tuple[float, float, float],
+                               physical_pos: tuple[float, float, float] | None,
+                               virtuals: list[tuple[float, float, float]] | None,
+                               pose_seq: int) -> bytes:
+    flags = POSE_FLAG_HEAD_VALID | POSE_FLAG_RIGHT_VALID | POSE_FLAG_LEFT_VALID
+    virtual_positions = list(virtuals or [])
+    if physical_pos is not None:
+        flags |= POSE_FLAG_PHYSICAL_VALID
+    if virtual_positions:
+        flags |= POSE_FLAG_VIRTUALS_VALID
+
+    buf = bytearray()
+    buf.append(MSG_CLIENT_POSE)
+    buf.append(PROTOCOL_VERSION)
+    pack_string(buf, device_id)
+    buf.extend(struct.pack("<H", pose_seq & 0xFFFF))
+    buf.append(flags)
+    buf.append(ENCODING_FLAGS_DEFAULT)
+
+    identity_rot = compress_quat_smallest_three(0.0, 0.0, 0.0, 1.0)
+    if physical_pos is not None:
+        delta_x = head_pos[0] - physical_pos[0]
+        delta_z = head_pos[2] - physical_pos[2]
+        buf.extend(struct.pack(
+            "<hhh",
+            quantize_s16(delta_x, DUMMY_PHYSICAL_DELTA_SCALE),
+            quantize_s16(delta_z, DUMMY_PHYSICAL_DELTA_SCALE),
+            quantize_s16(0.0, DUMMY_YAW_SCALE),
+        ))
+
+    for axis in head_pos:
+        pack_int24_le(buf, quantize_s24(axis, DUMMY_HEAD_POS_SCALE))
+    buf.extend(struct.pack("<I", compress_quat_smallest_three(*euler_to_quat(head_yaw_rad))))
+
+    for rel_pos in (right_rel, left_rel):
+        buf.extend(struct.pack(
+            "<hhhI",
+            quantize_s16(rel_pos[0], DUMMY_REL_POS_SCALE),
+            quantize_s16(rel_pos[1], DUMMY_REL_POS_SCALE),
+            quantize_s16(rel_pos[2], DUMMY_REL_POS_SCALE),
+            identity_rot,
+        ))
+
+    buf.append(len(virtual_positions))
+    for virtual_pos in virtual_positions:
+        rel_x = virtual_pos[0] - head_pos[0]
+        rel_y = virtual_pos[1] - head_pos[1]
+        rel_z = virtual_pos[2] - head_pos[2]
+        buf.extend(struct.pack(
+            "<hhhI",
+            quantize_s16(rel_x, DUMMY_REL_POS_SCALE),
+            quantize_s16(rel_y, DUMMY_REL_POS_SCALE),
+            quantize_s16(rel_z, DUMMY_REL_POS_SCALE),
+            identity_rot,
+        ))
+
     return bytes(buf)
 
 def serialize_rpc(function_name: str, args: list[str],
@@ -198,6 +310,21 @@ def deserialize_room_pose(data: bytes) -> dict:
         else:
             for _ in range(v_count):
                 offset += 10
+
+        if phys_valid and head_valid:
+            delta = client.get("xrOriginDelta", {})
+            d_x = delta.get("x", 0.0)
+            d_z = delta.get("z", 0.0)
+            d_yaw = delta.get("yaw", 0.0)
+            hp = client["head"]["pos"]
+            yaw_rad = math.radians(-d_yaw)
+            tx = hp["x"] - d_x
+            tz = hp["z"] - d_z
+            cos_y = math.cos(yaw_rad)
+            sin_y = math.sin(yaw_rad)
+            px = cos_y * tx + sin_y * tz
+            pz = -sin_y * tx + cos_y * tz
+            client["physical"] = {"pos": {"x": px, "y": hp["y"], "z": pz}}
 
         clients.append(client)
 
@@ -475,6 +602,212 @@ class WebClientHttpServer:
 
 # --- Bridge Core ---
 
+def wrap_angle_rad(angle: float) -> float:
+    while angle > math.pi:
+        angle -= math.tau
+    while angle < -math.pi:
+        angle += math.tau
+    return angle
+
+
+class DummyAvatar:
+    def __init__(self, bridge: "WebBridge", start_x: float, start_z: float) -> None:
+        self.bridge = bridge
+        self.device_id = f"dummy-{uuid.uuid4().hex[:12]}"
+        self.socket = bridge.ctx.socket(zmq.DEALER)
+        self.socket.setsockopt(zmq.LINGER, 0)
+        self.socket.connect(f"{bridge.server_address}:{bridge.dealer_port}")
+        self.pose_seq = 0
+        self.targets: list[tuple[float, float]] = []
+        self.phys_x = start_x
+        self.phys_z = start_z
+        self.loco_x = 0.0
+        self.loco_z = 0.0
+        self.head_yaw_rad = random.uniform(-math.pi, math.pi)
+        self.move_speed = 1.4 * random.uniform(0.85, 1.15)
+        self.head_height = random.uniform(1.55, 1.75)
+        self.hand_phase = random.uniform(0.0, math.tau)
+        self.virtual_orbits = [
+            {
+                "radius": random.uniform(0.22, 0.55),
+                "speed": random.uniform(0.6, 1.7),
+                "height": random.uniform(-0.15, 0.3),
+                "phase": random.uniform(0.0, math.tau),
+            }
+            for _ in range(random.randint(2, 3))
+        ]
+
+    def close(self) -> None:
+        self.socket.close()
+
+    def set_target(self, x: float, z: float) -> None:
+        self.targets = [(x, z)]
+
+    def add_target(self, x: float, z: float) -> None:
+        self.targets.append((x, z))
+
+    def update(self, dt: float) -> None:
+        moving = False
+        if self.targets:
+            target_x, target_z = self.targets[0]
+            delta_x = target_x - self.phys_x
+            delta_z = target_z - self.phys_z
+            distance = math.hypot(delta_x, delta_z)
+            if distance < 0.1:
+                self.phys_x = target_x
+                self.phys_z = target_z
+                self.targets.pop(0)
+            elif distance > 0.0:
+                moving = True
+                desired_yaw = math.atan2(delta_x, delta_z)
+                yaw_delta = wrap_angle_rad(desired_yaw - self.head_yaw_rad)
+                max_turn = 5.0 * dt
+                self.head_yaw_rad = wrap_angle_rad(
+                    self.head_yaw_rad + max(-max_turn, min(max_turn, yaw_delta))
+                )
+                step = min(self.move_speed * dt, distance)
+                self.phys_x += (delta_x / distance) * step
+                self.phys_z += (delta_z / distance) * step
+
+        if not moving and self.targets:
+            target_x, target_z = self.targets[0]
+            delta_x = target_x - self.phys_x
+            delta_z = target_z - self.phys_z
+            if math.hypot(delta_x, delta_z) > 1e-4:
+                desired_yaw = math.atan2(delta_x, delta_z)
+                yaw_delta = wrap_angle_rad(desired_yaw - self.head_yaw_rad)
+                max_turn = 5.0 * dt
+                self.head_yaw_rad = wrap_angle_rad(
+                    self.head_yaw_rad + max(-max_turn, min(max_turn, yaw_delta))
+                )
+
+        forward_x = math.sin(self.head_yaw_rad)
+        forward_z = math.cos(self.head_yaw_rad)
+        target_loco_x = forward_x * (0.09 if moving else 0.0)
+        target_loco_z = forward_z * (0.09 if moving else 0.0)
+        blend = min(1.0, dt * 6.0)
+        self.loco_x += (target_loco_x - self.loco_x) * blend
+        self.loco_z += (target_loco_z - self.loco_z) * blend
+
+    def get_transform(self, now: float) -> dict:
+        moving = bool(self.targets)
+        amplitude = 0.2 if moving else 0.03
+        frequency = 4.0 if moving else 0.8
+        swing = amplitude * math.sin((math.tau * frequency * now) + self.hand_phase)
+        lift = abs(swing) * 0.15
+
+        head_x = self.phys_x + self.loco_x
+        head_y = self.head_height
+        head_z = self.phys_z + self.loco_z
+        head_pos = (head_x, head_y, head_z)
+
+        right_rel = (0.24, -0.34 + lift, 0.18 + swing)
+        left_rel = (-0.24, -0.34 + lift, 0.18 - swing)
+
+        virtuals = []
+        for orbit in self.virtual_orbits:
+            angle = (now * orbit["speed"]) + orbit["phase"]
+            virtuals.append((
+                head_x + math.cos(angle) * orbit["radius"],
+                head_y + orbit["height"] + (0.05 * math.sin(angle * 1.7)),
+                head_z + math.sin(angle) * orbit["radius"],
+            ))
+
+        result = {
+            "device_id": self.device_id,
+            "head_pos": head_pos,
+            "head_yaw_rad": self.head_yaw_rad,
+            "right_rel": right_rel,
+            "left_rel": left_rel,
+            "physical_pos": (self.phys_x, 0.0, self.phys_z),
+            "virtuals": virtuals,
+            "pose_seq": self.pose_seq,
+        }
+        self.pose_seq = (self.pose_seq + 1) & 0xFFFF
+        return result
+
+
+class DummyAvatarManager:
+    def __init__(self, bridge: "WebBridge") -> None:
+        self.bridge = bridge
+        self.avatars: list[DummyAvatar] = []
+        self._send_task: asyncio.Task | None = None
+
+    @property
+    def count(self) -> int:
+        return len(self.avatars)
+
+    def start(self) -> None:
+        if self._send_task is None or self._send_task.done():
+            self._send_task = asyncio.create_task(self._send_loop())
+
+    async def stop(self) -> None:
+        self.despawn_all()
+        if self._send_task is not None:
+            self._send_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._send_task
+            self._send_task = None
+
+    def spawn(self, count: int, center_x: float, center_z: float, radius: float) -> None:
+        count = max(0, int(count))
+        if count <= 0:
+            return
+
+        self.start()
+        radius = max(0.0, float(radius))
+        for index in range(count):
+            if count == 1:
+                x = center_x
+                z = center_z
+            else:
+                angle = (math.tau * index) / count
+                x = center_x + math.cos(angle) * radius
+                z = center_z + math.sin(angle) * radius
+            self.avatars.append(DummyAvatar(self.bridge, x, z))
+
+    def despawn_all(self) -> None:
+        for avatar in self.avatars:
+            avatar.close()
+        self.avatars.clear()
+
+    def move_all_to(self, tx: float, tz: float) -> None:
+        for avatar in self.avatars:
+            avatar.set_target(tx, tz)
+
+    def add_waypoint(self, tx: float, tz: float) -> None:
+        for avatar in self.avatars:
+            avatar.add_target(tx, tz)
+
+    async def _send_loop(self) -> None:
+        last_tick = time.monotonic()
+        room_bytes = self.bridge.room_id.encode("utf-8")
+        while True:
+            await asyncio.sleep(DUMMY_SEND_INTERVAL_SEC)
+            now = time.monotonic()
+            dt = max(0.001, now - last_tick)
+            last_tick = now
+            if not self.avatars:
+                continue
+
+            for avatar in list(self.avatars):
+                avatar.update(dt)
+                transform = avatar.get_transform(now)
+                payload = serialize_avatar_transform(
+                    device_id=transform["device_id"],
+                    head_pos=transform["head_pos"],
+                    head_yaw_rad=transform["head_yaw_rad"],
+                    right_rel=transform["right_rel"],
+                    left_rel=transform["left_rel"],
+                    physical_pos=transform["physical_pos"],
+                    virtuals=transform["virtuals"],
+                    pose_seq=transform["pose_seq"],
+                )
+                try:
+                    await avatar.socket.send_multipart([room_bytes, payload])
+                except Exception as exc:
+                    print(f"[DUMMY] Send error for {avatar.device_id}: {exc}")
+
 class WebBridge:
     def __init__(self, server_address="tcp://localhost",
                  dealer_port=5555, sub_port=5556, room_id="default_room"):
@@ -492,6 +825,7 @@ class WebBridge:
         self.client_variables: dict[str, dict[str, dict]] = {}  # clientNo(str) -> {name -> {value, timestamp, lastWriter}}
         self.id_mappings: list[dict] = []
         self.room_pose_clients: dict[str, dict] = {}
+        self.dummy_manager = DummyAvatarManager(self)
 
     def _update_nv_cache(self, msg: dict):
         """SUBメッセージからNVキャッシュを更新"""
@@ -535,13 +869,15 @@ class WebBridge:
             "globalVariables": self.global_variables,
             "clientVariables": self.client_variables,
             "idMappings": self.id_mappings,
-            "roomSummary": self._build_room_summary()
+            "roomSummary": self._build_room_summary(),
+            "dummyCount": self.dummy_manager.count,
         })
 
     def _build_bridge_status(self) -> str:
         return json.dumps({
             "type": "bridge_status",
             "roomSummary": self._build_room_summary(),
+            "dummyCount": self.dummy_manager.count,
             "netSync": {
                 "serverAddress": self.server_address,
                 "dealerPort": self.dealer_port,
@@ -592,6 +928,20 @@ class WebBridge:
             return
 
         json_str = self._build_bridge_status()
+        disconnected = []
+        for ws in list(self.ws_clients.keys()):
+            try:
+                await ws.send(json_str)
+            except websockets.ConnectionClosed:
+                disconnected.append(ws)
+        for ws in disconnected:
+            del self.ws_clients[ws]
+
+    async def _broadcast_dummy_status(self):
+        if not self.ws_clients:
+            return
+
+        json_str = json.dumps({"type": "dummy_status", "count": self.dummy_manager.count})
         disconnected = []
         for ws in list(self.ws_clients.keys()):
             try:
@@ -710,6 +1060,25 @@ class WebBridge:
                     # ★ クライアントからのスナップショットリクエスト
                     await ws.send(self._build_snapshot())
 
+                elif action == "spawn_dummies":
+                    self.dummy_manager.spawn(
+                        int(msg.get("count", 0)),
+                        float(msg.get("centerX", 0.0)),
+                        float(msg.get("centerZ", 0.0)),
+                        float(msg.get("radius", 0.0)),
+                    )
+                    await self._broadcast_dummy_status()
+
+                elif action == "despawn_dummies":
+                    self.dummy_manager.despawn_all()
+                    await self._broadcast_dummy_status()
+
+                elif action == "move_dummies_to":
+                    self.dummy_manager.move_all_to(float(msg.get("x", 0.0)), float(msg.get("z", 0.0)))
+
+                elif action == "add_waypoint":
+                    self.dummy_manager.add_waypoint(float(msg.get("x", 0.0)), float(msg.get("z", 0.0)))
+
         except websockets.ConnectionClosed:
             pass
         finally:
@@ -757,11 +1126,13 @@ class WebBridge:
                     print(f"  - {url}")
         else:
             print(f"[Bridge] Reachable URL: ws://{ws_host}:{ws_port}")
+        self.dummy_manager.start()
         asyncio.create_task(self.zmq_subscriber())
         try:
             async with websockets.serve(self.handle_ws_client, ws_host, ws_port):
                 await asyncio.Future()
         finally:
+            await self.dummy_manager.stop()
             if http_server is not None:
                 http_server.stop()
 

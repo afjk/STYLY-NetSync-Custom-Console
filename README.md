@@ -10,6 +10,7 @@ GitHub Pages: https://afjk.github.io/STYLY-NetSync-Custom-Console/
 
 - `index.html` - GitHub Pages entry point
 - `NetSyncWebClient.html` - browser console UI
+- `3d.html` - Three.js based 3D room viewer
 - `bridge_server.py` - WebSocket bridge, NetSync discovery, and static web console server
 - `start_bridge_server.sh` - launcher script
 - `idea/` - design notes and future plans
@@ -57,6 +58,11 @@ Typical startup output:
 ```
 
 Open the HTTP URL from the same Mac or another PC on the network.
+
+Additional viewer URLs served by the same bridge:
+
+- `http://<bridge-ip>:8080/NetSyncWebClient.html`
+- `http://<bridge-ip>:8080/3d.html`
 
 ## External PC Access
 
@@ -122,7 +128,10 @@ Disable HTTP serving if you only want the WebSocket bridge:
 - global Network Variable display and set
 - client Network Variable display and set
 - RPC send from selected client detail
-- simple top-down map view
+- simple top-down map view with auto scaling
+- dummy avatar spawn / despawn controls
+- map click to move dummy avatars (`Shift + click` adds a waypoint)
+- Three.js 3D viewer with virtual / physical display modes
 
 ## Network Notes
 

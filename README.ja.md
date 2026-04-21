@@ -10,6 +10,7 @@ GitHub Pages: https://afjk.github.io/STYLY-NetSync-Custom-Console/
 
 - `index.html` - GitHub Pages 用の入口
 - `NetSyncWebClient.html` - ブラウザで開く管理コンソール UI
+- `3d.html` - Three.js ベースの 3D ビューア
 - `bridge_server.py` - WebSocket bridge、NetSync discovery、Web UI 配信サーバー
 - `start_bridge_server.sh` - 起動スクリプト
 - `idea/` - 今後の設計メモ
@@ -59,6 +60,11 @@ python3 -m pip install pyzmq websockets
 ```
 
 同じ Mac、または同一ネットワーク上の別 PC から HTTP URL を開いてください。
+
+同じ bridge から以下のページも配信されます。
+
+- `http://<bridge-ip>:8080/NetSyncWebClient.html`
+- `http://<bridge-ip>:8080/3d.html`
 
 ## 外部 PC から開く
 
@@ -124,7 +130,10 @@ HTTP 配信を無効にして WebSocket bridge だけ起動する場合:
 - Global Network Variable の表示と設定
 - Client Network Variable の表示と設定
 - 選択中参加者への RPC 送信
-- 簡易 top-down map 表示
+- 自動スケーリング付きの簡易 top-down map 表示
+- ダミーアバターの生成 / 削除
+- マップクリックでのダミー移動指示（`Shift + click` で waypoint 追加）
+- virtual / physical 表示切り替え付きの Three.js 3D ビューア
 
 ## ネットワークメモ
 
