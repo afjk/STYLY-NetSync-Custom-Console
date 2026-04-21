@@ -407,7 +407,7 @@
             <button onclick="addWatchedClientVar()">Watch</button>
           </div>
           <div class="watch-list" id="watch-var-list"></div>
-          <button onclick="requestSnapshot()">Refresh</button>
+          <button type="button" class="refresh-btn">Refresh</button>
         </div>
       </div>
       <div class="grid-wrap" id="participants-grid"></div>
@@ -420,7 +420,7 @@
     <aside class="side">
       <div class="section-head">
         <h2>Global Variables</h2>
-        <button onclick="requestSnapshot()">Refresh</button>
+        <button type="button" class="refresh-btn">Refresh</button>
       </div>
       <div class="side-global">
         <div class="global-grid" style="padding:12px 14px 0">
@@ -630,8 +630,14 @@ function disconnect() {
 }
 
 function requestSnapshot() {
-  if (!ws || ws.readyState !== 1) return;
+  if (!ws || ws.readyState !== 1) {
+    toast("Not connected", true);
+    return;
+  }
+  preserveDetailRenderUntil = 0;
+  preserveGlobalRenderUntil = 0;
   ws.send(JSON.stringify({ action: "get_snapshot" }));
+  toast("Refresh requested");
 }
 
 function getListedClientNos() {
@@ -846,6 +852,14 @@ function initializeEditGuards() {
 }
 
 function handleVariableAction(event) {
+  const refreshButton = event.target.closest(".refresh-btn");
+  if (refreshButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    requestSnapshot();
+    return true;
+  }
+
   const removeButton = event.target.closest(".remove-watch-btn");
   if (removeButton) {
     event.preventDefault();
