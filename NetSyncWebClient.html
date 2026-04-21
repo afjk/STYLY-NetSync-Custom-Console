@@ -2,242 +2,360 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>STYLY NetSync Web Client</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>STYLY NetSync Console</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0d1117; color: #e6edf3; }
-  .header { background: #161b22; border-bottom: 1px solid #30363d; padding: 14px 24px; display: flex; align-items: center; gap: 12px; }
-  .header h1 { font-size: 18px; color: #e94560; }
-  .header .badge { background: #1f6feb33; color: #58a6ff; font-size: 11px; padding: 2px 8px; border-radius: 10px; }
-  .container { max-width: 1400px; margin: 20px auto; padding: 0 16px; display: flex; flex-direction: column; gap: 14px; }
-  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; }
-  .card-header { padding: 10px 16px; border-bottom: 1px solid #30363d; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
-  .card-header h2 { font-size: 14px; font-weight: 600; }
-  .card-body { padding: 14px; }
-  .row { display: flex; gap: 14px; flex-wrap: wrap; }
-  .row > .card { flex: 1 1 320px; }
-  .form-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
-  label { font-size: 12px; color: #8b949e; min-width: 80px; }
-  input[type="text"], select { background: #0d1117; border: 1px solid #30363d; color: #e6edf3; padding: 5px 8px; border-radius: 5px; font-size: 13px; flex: 1; min-width: 100px; }
-  input:focus { outline: none; border-color: #58a6ff; }
-  select:focus { outline: none; border-color: #58a6ff; }
-  button { background: #238636; color: #fff; border: none; padding: 5px 12px; border-radius: 5px; cursor: pointer; font-size: 12px; font-weight: 500; white-space: nowrap; }
-  button:hover { background: #2ea043; }
-  button.secondary { background: #30363d; }
-  button.secondary:hover { background: #484f58; }
-  .status-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
-  .status-dot.ok { background: #3fb950; }
-  .status-dot.err { background: #f85149; }
-  .status-text { font-size: 12px; color: #8b949e; margin-left: 5px; }
-  .header-note { font-size: 11px; color: #8b949e; }
-
-  .overview-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
-  .stat-card { background: #0d1117; border: 1px solid #21262d; border-radius: 6px; padding: 12px; }
-  .stat-card .label { color: #8b949e; font-size: 11px; margin-bottom: 6px; }
-  .stat-card .value { color: #e6edf3; font-size: 24px; font-weight: 700; line-height: 1; }
-  .stat-card .sub { color: #58a6ff; font-size: 11px; margin-top: 6px; }
-  .occupancy { margin-top: 10px; }
-  .occupancy-bar { width: 100%; height: 10px; border-radius: 999px; background: #0d1117; border: 1px solid #21262d; overflow: hidden; }
-  .occupancy-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #238636, #58a6ff); }
-  .occupancy-text { margin-top: 6px; font-size: 11px; color: #8b949e; }
-  .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  .toolbar input[type="text"] { max-width: 320px; }
-  .connection-hint { font-size: 11px; color: #8b949e; margin-top: 4px; }
-  .connection-hint code { color: #79c0ff; font-family: 'SF Mono', monospace; }
-  .scroll-body { max-height: 420px; overflow: auto; }
-  .directory-table-wrap { max-height: 420px; overflow: auto; }
-  .directory-table td { white-space: nowrap; }
-  .directory-table td.device { max-width: 220px; overflow: hidden; text-overflow: ellipsis; color: #79c0ff; font-family: 'SF Mono', monospace; }
-  .directory-table td.state { color: #8b949e; }
-  .directory-table td.count { color: #d2a8ff; }
-
-  /* NV テーブル */
-  .nv-table { width: 100%; border-collapse: collapse; }
-  .nv-table th, .nv-table td { text-align: left; padding: 5px 8px; border-bottom: 1px solid #21262d; font-size: 12px; }
-  .nv-table th { color: #8b949e; font-weight: 500; font-size: 11px; }
-  .nv-table th { position: sticky; top: 0; background: #161b22; }
-  .nv-table td.name { color: #d2a8ff; font-family: 'SF Mono', monospace; }
-  .nv-table td.val  { color: #79c0ff; font-family: 'SF Mono', monospace; word-break: break-all; }
-  .nv-table td.meta { color: #484f58; font-size: 11px; }
-  .nv-empty { color: #484f58; font-size: 12px; font-style: italic; padding: 8px 0; }
-
-  /* Client セクション */
-  .client-section { margin-bottom: 10px; background: #0d1117; border: 1px solid #21262d; border-radius: 6px; overflow: hidden; }
-  .client-section summary { list-style: none; cursor: pointer; padding: 10px 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .client-section summary::-webkit-details-marker { display: none; }
-  .client-section-header { font-size: 12px; font-weight: 600; color: #58a6ff; }
-  .client-section-meta { font-size: 11px; color: #8b949e; }
-  .client-section-body { padding: 0 10px 10px; }
-
-  /* Canvas */
-  #avatar-canvas { width: 100%; height: 360px; background: #0a0a1a; border-radius: 6px; }
-
-  /* Log */
-  .log-area { background: #0d1117; border: 1px solid #21262d; border-radius: 5px; padding: 8px; max-height: 160px; overflow-y: auto; font-family: 'SF Mono', monospace; font-size: 11px; }
-  .log-area .entry { padding: 1px 0; border-bottom: 1px solid #161b22; }
-  .log-area .time { color: #484f58; }
-  .log-area .ok { color: #3fb950; }
-  .log-area .err { color: #f85149; }
-
-  /* RPC */
-  .kv-pair { display: flex; gap: 6px; margin-bottom: 4px; }
-  .kv-pair input { flex: 1; }
-  .kv-remove { background: #30363d; color: #f85149; border: none; width: 24px; height: 24px; border-radius: 4px; cursor: pointer; font-size: 14px; }
-
-  @media (max-width: 1100px) {
-    .overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", system-ui, sans-serif;
+    background: #0f1115;
+    color: #e8edf2;
   }
-
-  @media (max-width: 720px) {
-    .overview-grid { grid-template-columns: 1fr; }
+  button, input, select { font: inherit; }
+  button {
+    border: 1px solid #3a414d;
+    background: #202734;
+    color: #e8edf2;
+    border-radius: 6px;
+    padding: 7px 12px;
+    cursor: pointer;
+  }
+  button:hover { background: #2a3342; }
+  button.primary { background: #2367d1; border-color: #2b74df; }
+  button.primary:hover { background: #2b74df; }
+  input, select {
+    min-width: 0;
+    border: 1px solid #303846;
+    background: #151922;
+    color: #e8edf2;
+    border-radius: 6px;
+    padding: 7px 9px;
+    outline: none;
+  }
+  input:focus, select:focus { border-color: #4f8cff; }
+  .app {
+    min-height: 100vh;
+    display: grid;
+    grid-template-rows: auto auto 1fr;
+  }
+  .topbar {
+    display: grid;
+    grid-template-columns: auto minmax(240px, 1fr) auto auto;
+    gap: 10px;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid #252b35;
+    background: #151922;
+  }
+  .brand {
+    font-size: 16px;
+    font-weight: 700;
+    color: #ff4d68;
+    white-space: nowrap;
+  }
+  .status {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: #aab4c0;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 99px;
+    background: #d84a4a;
+  }
+  .dot.ok { background: #39c16c; }
+  .url-tools {
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) auto auto;
+    gap: 8px;
+  }
+  .summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(120px, 1fr));
+    gap: 1px;
+    background: #252b35;
+    border-bottom: 1px solid #252b35;
+  }
+  .metric {
+    background: #11151d;
+    padding: 12px 16px;
+  }
+  .metric-label {
+    color: #8f9aaa;
+    font-size: 11px;
+    margin-bottom: 5px;
+  }
+  .metric-value {
+    font-size: 26px;
+    line-height: 1;
+    font-weight: 700;
+  }
+  .main {
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(520px, 1fr) 380px;
+  }
+  .panel {
+    min-height: 0;
+    border-right: 1px solid #252b35;
+    display: grid;
+    grid-template-rows: auto minmax(220px, 1fr) 260px auto;
+  }
+  .side {
+    min-width: 0;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    background: #11151d;
+  }
+  .section-head {
+    min-height: 49px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 1px solid #252b35;
+  }
+  .section-head h2 {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 650;
+  }
+  .filters {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .filters input { width: 260px; }
+  .grid-wrap {
+    min-height: 0;
+    overflow: auto;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  th, td {
+    border-bottom: 1px solid #202631;
+    padding: 8px 10px;
+    text-align: left;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: #171c26;
+    color: #8f9aaa;
+    font-weight: 600;
+  }
+  tbody tr { cursor: default; }
+  tbody tr:hover { background: #192130; }
+  tbody tr.selected { background: #22304a; }
+  .mono {
+    font-family: "SF Mono", Consolas, monospace;
+    font-size: 12px;
+  }
+  .device {
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #8cbcff;
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 2px 7px;
+    font-size: 11px;
+    color: #aab4c0;
+    background: #202734;
+  }
+  .pill.active { color: #87e1aa; background: #143522; }
+  .pill.stealth { color: #ffd37a; background: #3b2b13; }
+  .map-wrap {
+    min-height: 0;
+    border-top: 1px solid #252b35;
+    background: #0c1017;
+  }
+  #avatar-canvas {
+    display: block;
+    width: 100%;
+    height: 210px;
+  }
+  .detail-empty {
+    color: #687386;
+    padding: 18px;
+    font-size: 13px;
+  }
+  .detail-body {
+    min-height: 0;
+    overflow: auto;
+    padding: 14px;
+  }
+  .kv {
+    display: grid;
+    grid-template-columns: 96px minmax(0, 1fr);
+    gap: 8px;
+    padding: 7px 0;
+    border-bottom: 1px solid #202631;
+    font-size: 12px;
+  }
+  .kv .k { color: #8f9aaa; }
+  .kv .v { overflow-wrap: anywhere; }
+  .vars {
+    margin-top: 14px;
+  }
+  .vars h3 {
+    margin: 0 0 8px;
+    color: #aab4c0;
+    font-size: 12px;
+    font-weight: 650;
+  }
+  .editor {
+    display: grid;
+    gap: 8px;
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid #252b35;
+  }
+  .editor-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: 8px;
+  }
+  .global {
+    padding: 12px 14px;
+    border-top: 1px solid #252b35;
+    background: #11151d;
+  }
+  .global-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .global-head h2 {
+    margin: 0;
+    font-size: 13px;
+  }
+  .global-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .global-list {
+    max-height: 120px;
+    overflow: auto;
+    border: 1px solid #202631;
+    border-radius: 6px;
+  }
+  .empty {
+    padding: 14px;
+    color: #687386;
+    font-size: 12px;
+  }
+  .toast {
+    position: fixed;
+    left: 16px;
+    bottom: 16px;
+    max-width: min(420px, calc(100vw - 32px));
+    background: #151922;
+    border: 1px solid #303846;
+    border-radius: 8px;
+    padding: 10px 12px;
+    color: #dbe4ee;
+    font-size: 12px;
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity .15s ease, transform .15s ease;
+    pointer-events: none;
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  @media (max-width: 980px) {
+    .topbar { grid-template-columns: 1fr; }
+    .url-tools { grid-template-columns: 1fr auto auto; }
+    .summary { grid-template-columns: repeat(2, 1fr); }
+    .main { grid-template-columns: 1fr; }
+    .panel { border-right: 0; }
+    .side { min-height: 420px; border-top: 1px solid #252b35; }
+  }
+  @media (max-width: 620px) {
+    .url-tools, .global-grid, .editor-row { grid-template-columns: 1fr; }
+    .filters { width: 100%; }
+    .filters input { width: 100%; }
   }
 </style>
 </head>
 <body>
-
-<div class="header">
-  <h1>STYLY NetSync</h1>
-  <span class="badge">WebSocket Client</span>
-</div>
-
-<div class="container">
-
-  <!-- Connection -->
-  <div class="card">
-    <div class="card-header">
-      <h2>Connection</h2>
-      <div><span id="status-dot" class="status-dot err"></span><span id="status-text" class="status-text">Disconnected</span></div>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">STYLY NetSync</div>
+    <div class="url-tools">
+      <input type="text" id="ws-url" value="" aria-label="Bridge URL">
+      <button class="primary" onclick="connect()">Connect</button>
+      <button onclick="disconnect()">Disconnect</button>
     </div>
-    <div class="card-body">
-      <div class="form-row">
-        <label>Bridge URL</label>
-        <input type="text" id="ws-url" value="ws://localhost:8765">
-        <button onclick="connect()">Connect</button>
-        <button class="secondary" onclick="disconnect()">Disconnect</button>
-      </div>
-      <div class="form-row">
-        <label>Saved URLs</label>
-        <select id="ws-url-candidates"></select>
-        <button class="secondary" onclick="useSelectedBridgeUrl()">Use</button>
-        <button class="secondary" onclick="saveCurrentBridgeUrl()">Save current</button>
-        <button class="secondary" onclick="clearSavedBridgeUrls()">Clear</button>
-      </div>
-      <div class="connection-hint">Discovery is not implemented yet. For another PC on the same LAN, start the bridge with <code>./start_bridge_server.sh --ws-host 0.0.0.0 --ws-port 8765</code>, allow TCP <code>8765</code> in the firewall, then connect with an explicit URL such as <code>ws://192.168.1.10:8765</code>.</div>
-      <div class="overview-grid">
-        <div class="stat-card">
-          <div class="label">参加クライアント</div>
-          <div class="value" id="stat-room-clients">0</div>
-          <div class="sub">推奨上限 100 台</div>
-        </div>
-        <div class="stat-card">
-          <div class="label">Pose受信中</div>
-          <div class="value" id="stat-pose-clients">0</div>
-          <div class="sub">現在描画対象のクライアント数</div>
-        </div>
-        <div class="stat-card">
-          <div class="label">Web監視クライアント</div>
-          <div class="value" id="stat-web-clients">0</div>
-          <div class="sub">このBridgeに接続中のWeb数</div>
-        </div>
-        <div class="stat-card">
-          <div class="label">表示対象クライアント</div>
-          <div class="value" id="stat-listed-clients">0</div>
-          <div class="sub">マッピング / Pose / NV の統合数</div>
+    <select id="ws-url-candidates" aria-label="Saved URLs"></select>
+    <div class="status"><span id="status-dot" class="dot"></span><span id="status-text">Disconnected</span></div>
+  </header>
+
+  <section class="summary">
+    <div class="metric"><div class="metric-label">Participants</div><div class="metric-value" id="stat-room-clients">0</div></div>
+    <div class="metric"><div class="metric-label">Pose</div><div class="metric-value" id="stat-pose-clients">0</div></div>
+    <div class="metric"><div class="metric-label">Web</div><div class="metric-value" id="stat-web-clients">0</div></div>
+    <div class="metric"><div class="metric-label">Variables</div><div class="metric-value" id="stat-var-count">0</div></div>
+  </section>
+
+  <main class="main">
+    <section class="panel">
+      <div class="section-head">
+        <h2>Participants</h2>
+        <div class="filters">
+          <input type="text" id="client-filter" placeholder="Filter" oninput="renderAll()">
+          <button onclick="requestSnapshot()">Refresh</button>
         </div>
       </div>
-      <div class="occupancy">
-        <div class="occupancy-bar"><div id="occupancy-fill" class="occupancy-fill"></div></div>
-        <div id="occupancy-text" class="occupancy-text">0 / 100 clients</div>
+      <div class="grid-wrap" id="participants-grid"></div>
+      <div class="map-wrap">
+        <div class="section-head"><h2>Map</h2><span id="map-caption" class="mono">0</span></div>
+        <canvas id="avatar-canvas" width="1200" height="210"></canvas>
       </div>
-    </div>
-  </div>
-
-  <!-- Summary + Global -->
-  <div class="row">
-    <div class="card">
-      <div class="card-header">
-        <h2>Global Variables</h2>
-        <button class="secondary" onclick="requestSnapshot()">Refresh</button>
-      </div>
-      <div class="card-body scroll-body" id="global-vars-display">
-        <div class="nv-empty">No global variables yet</div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-header">
-        <h2>Client Directory</h2>
-        <div class="toolbar">
-          <input type="text" id="client-filter" placeholder="clientNo / deviceId で絞り込み" oninput="renderClientDirectory(); renderClientVars();">
-          <button class="secondary" onclick="requestSnapshot()">Refresh</button>
-        </div>
-      </div>
-      <div class="card-body directory-table-wrap" id="client-directory-display">
-        <div class="nv-empty">No clients yet</div>
-      </div>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="card-header">
-      <h2>Client Variables</h2>
-      <div class="header-note">100台規模を想定し、クライアントごとに折りたたみ表示</div>
-    </div>
-    <div class="card-body scroll-body" id="client-vars-display">
-      <div class="nv-empty">No client variables yet</div>
-    </div>
-  </div>
-
-  <!-- Avatar Map -->
-  <div class="card">
-    <div class="card-header"><h2>Clients (Top-down)</h2><div id="map-caption" class="header-note">0 clients</div></div>
-    <div class="card-body">
-      <canvas id="avatar-canvas" width="1200" height="360"></canvas>
-    </div>
-  </div>
-
-  <!-- Send RPC -->
-  <div class="card">
-    <div class="card-header"><h2>Send RPC</h2></div>
-    <div class="card-body">
-      <div class="form-row">
-        <input type="text" id="rpc-func" placeholder="Function name" value="hello" style="max-width:200px">
-        <input type="text" id="rpc-args" placeholder="Args (comma separated)" value="world,42">
-        <button onclick="sendRpc()">Send</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Set NV -->
-  <div class="row">
-    <div class="card">
-      <div class="card-header"><h2>Set Global Variable</h2></div>
-      <div class="card-body">
-        <div class="form-row">
+      <div class="global">
+        <div class="global-head"><h2>Global Variables</h2></div>
+        <div class="global-grid">
           <input type="text" id="set-gv-name" placeholder="name">
           <input type="text" id="set-gv-value" placeholder="value">
           <button onclick="setGlobalVar()">Set</button>
         </div>
+        <div class="global-list" id="global-vars-display"></div>
       </div>
-    </div>
-    <div class="card">
-      <div class="card-header"><h2>Set Client Variable</h2></div>
-      <div class="card-body">
-        <div class="form-row">
-          <input type="text" id="set-cv-clientno" placeholder="clientNo" style="max-width:80px">
-          <input type="text" id="set-cv-name" placeholder="name">
-          <input type="text" id="set-cv-value" placeholder="value">
-          <button onclick="setClientVar()">Set</button>
-        </div>
-      </div>
-    </div>
-  </div>
+    </section>
 
-  <!-- Log -->
-  <div class="card">
-    <div class="card-header"><h2>Event Log</h2><button class="secondary" onclick="clearLog()">Clear</button></div>
-    <div class="card-body"><div id="log" class="log-area"></div></div>
-  </div>
+    <aside class="side">
+      <div class="section-head">
+        <h2 id="detail-title">Details</h2>
+        <button onclick="clearSelection()">Close</button>
+      </div>
+      <div class="detail-body" id="detail-body">
+        <div class="detail-empty">Double-click a participant.</div>
+      </div>
+    </aside>
+  </main>
 </div>
+<div id="toast" class="toast"></div>
 
 <script>
 let ws = null;
@@ -245,27 +363,122 @@ let clients = {};
 let idMappings = {};
 let globalVars = {};
 let clientVars = {};
+let selectedClientNo = null;
 let roomSummary = { roomClientCount: 0, poseClientCount: 0, stealthClientCount: 0, webClientCount: 0, maxRecommendedClients: 100 };
-const BRIDGE_URL_STORAGE_KEY = 'styly-netsync-bridge-url';
-const BRIDGE_URL_HISTORY_KEY = 'styly-netsync-bridge-url-history';
+
+const BRIDGE_URL_STORAGE_KEY = "styly-netsync-bridge-url";
+const BRIDGE_URL_HISTORY_KEY = "styly-netsync-bridge-url-history";
 const MAX_BRIDGE_URL_HISTORY = 8;
 
-function log(msg, type='ok') {
-  const el = document.getElementById('log');
-  const t = new Date().toLocaleTimeString();
-  el.innerHTML = `<div class="entry"><span class="time">${t}</span> <span class="${type}">${msg}</span></div>` + el.innerHTML;
-  if (el.children.length > 150) el.lastChild.remove();
+function esc(value) {
+  const d = document.createElement("div");
+  d.textContent = value == null ? "" : String(value);
+  return d.innerHTML;
 }
-function clearLog() { document.getElementById('log').innerHTML = ''; }
+
+function toast(message, isError = false) {
+  const el = document.getElementById("toast");
+  el.textContent = message;
+  el.style.borderColor = isError ? "#7d3434" : "#303846";
+  el.classList.add("show");
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => el.classList.remove("show"), 1800);
+}
 
 function setStatus(ok) {
-  document.getElementById('status-dot').className = 'status-dot ' + (ok ? 'ok' : 'err');
-  document.getElementById('status-text').textContent = ok ? 'Connected' : 'Disconnected';
+  document.getElementById("status-dot").className = "dot" + (ok ? " ok" : "");
+  document.getElementById("status-text").textContent = ok ? "Connected" : "Disconnected";
 }
 
-function shortDeviceId(deviceId) {
-  if (!deviceId) return '-';
-  return deviceId.length > 18 ? `${deviceId.substring(0, 8)}…${deviceId.slice(-6)}` : deviceId;
+function normalizeBridgeUrl(rawUrl) {
+  const trimmed = (rawUrl || "").trim();
+  if (!trimmed) return "";
+  return /^wss?:\/\//i.test(trimmed) ? trimmed : `ws://${trimmed}`;
+}
+
+function getBridgeHistory() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(BRIDGE_URL_HISTORY_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function getDefaultBridgeCandidates() {
+  const defaults = [];
+  if (location.hostname && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+    defaults.push(`ws://${location.hostname}:8765`);
+  }
+  defaults.push("ws://localhost:8765", "ws://127.0.0.1:8765");
+  return defaults;
+}
+
+function renderBridgeUrlCandidates() {
+  const select = document.getElementById("ws-url-candidates");
+  const urls = Array.from(new Set([...getBridgeHistory(), ...getDefaultBridgeCandidates()].map(normalizeBridgeUrl).filter(Boolean)));
+  select.innerHTML = urls.map(url => `<option value="${esc(url)}">${esc(url)}</option>`).join("");
+  select.onchange = () => {
+    document.getElementById("ws-url").value = select.value;
+  };
+}
+
+function saveBridgeUrlToHistory(rawUrl) {
+  const normalized = normalizeBridgeUrl(rawUrl);
+  if (!normalized) return "";
+  const history = [normalized, ...getBridgeHistory().filter(url => normalizeBridgeUrl(url) !== normalized)].slice(0, MAX_BRIDGE_URL_HISTORY);
+  localStorage.setItem(BRIDGE_URL_STORAGE_KEY, normalized);
+  localStorage.setItem(BRIDGE_URL_HISTORY_KEY, JSON.stringify(history));
+  renderBridgeUrlCandidates();
+  return normalized;
+}
+
+function initializeBridgeUrlUi() {
+  const urlInput = document.getElementById("ws-url");
+  const savedUrl = normalizeBridgeUrl(localStorage.getItem(BRIDGE_URL_STORAGE_KEY) || "");
+  urlInput.value = savedUrl || getDefaultBridgeCandidates()[0] || "";
+  urlInput.addEventListener("keydown", event => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      connect();
+    }
+  });
+  renderBridgeUrlCandidates();
+}
+
+function connect() {
+  const url = normalizeBridgeUrl(document.getElementById("ws-url").value);
+  if (!url) {
+    toast("Bridge URL required", true);
+    return;
+  }
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") throw new Error("Invalid protocol");
+  } catch {
+    toast(`Invalid URL: ${url}`, true);
+    return;
+  }
+
+  document.getElementById("ws-url").value = saveBridgeUrlToHistory(url);
+  if (ws && ws.readyState <= 1) ws.close();
+  ws = new WebSocket(url);
+  ws.onopen = () => {
+    setStatus(true);
+    requestSnapshot();
+  };
+  ws.onclose = () => setStatus(false);
+  ws.onerror = () => toast("WebSocket error", true);
+  ws.onmessage = event => handleMessage(JSON.parse(event.data));
+}
+
+function disconnect() {
+  if (ws) ws.close();
+}
+
+function requestSnapshot() {
+  if (!ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ action: "get_snapshot" }));
 }
 
 function getListedClientNos() {
@@ -277,500 +490,357 @@ function getListedClientNos() {
 }
 
 function getClientFilter() {
-  return (document.getElementById('client-filter')?.value || '').trim().toLowerCase();
+  return (document.getElementById("client-filter")?.value || "").trim().toLowerCase();
 }
 
-function matchesClientFilter(cno, mapping) {
+function matchesClientFilter(cno) {
   const filter = getClientFilter();
   if (!filter) return true;
-  return String(cno).includes(filter) || (mapping?.deviceId || '').toLowerCase().includes(filter);
+  const mapping = idMappings[cno] || {};
+  const vars = clientVars[cno] || {};
+  return String(cno).includes(filter)
+    || (mapping.deviceId || "").toLowerCase().includes(filter)
+    || Object.keys(vars).some(name => name.toLowerCase().includes(filter));
+}
+
+function shortDeviceId(deviceId) {
+  if (!deviceId) return "-";
+  return deviceId.length > 22 ? `${deviceId.slice(0, 10)}...${deviceId.slice(-6)}` : deviceId;
+}
+
+function getVarCount() {
+  return Object.keys(globalVars).length + Object.values(clientVars).reduce((sum, vars) => sum + Object.keys(vars || {}).length, 0);
 }
 
 function getDerivedSummary() {
   const mappedRoomClients = Object.values(idMappings).filter(m => !m.stealth).length;
   const poseClientCount = Object.keys(clients).length;
-  const listedClientCount = getListedClientNos().length;
-  const maxRecommendedClients = roomSummary.maxRecommendedClients || 100;
-  const roomClientCount = mappedRoomClients > 0
-    ? Math.max(mappedRoomClients, poseClientCount)
-    : Math.max(roomSummary.roomClientCount || 0, poseClientCount);
   return {
-    roomClientCount,
+    roomClientCount: Math.max(mappedRoomClients, roomSummary.roomClientCount || 0, poseClientCount),
     poseClientCount: Math.max(roomSummary.poseClientCount || 0, poseClientCount),
     webClientCount: roomSummary.webClientCount || 0,
-    listedClientCount,
-    maxRecommendedClients
+    varCount: getVarCount()
   };
 }
 
 function renderOverview() {
   const summary = getDerivedSummary();
-  const occupancy = Math.min(100, Math.round((summary.roomClientCount / summary.maxRecommendedClients) * 100));
-  document.getElementById('stat-room-clients').textContent = summary.roomClientCount;
-  document.getElementById('stat-pose-clients').textContent = summary.poseClientCount;
-  document.getElementById('stat-web-clients').textContent = summary.webClientCount;
-  document.getElementById('stat-listed-clients').textContent = summary.listedClientCount;
-  document.getElementById('occupancy-fill').style.width = `${occupancy}%`;
-  document.getElementById('occupancy-text').textContent = `${summary.roomClientCount} / ${summary.maxRecommendedClients} clients`;
-  document.getElementById('map-caption').textContent = summary.poseClientCount > 24
-    ? `${summary.poseClientCount} clients tracked · dense mode`
-    : `${summary.poseClientCount} clients tracked`;
+  document.getElementById("stat-room-clients").textContent = summary.roomClientCount;
+  document.getElementById("stat-pose-clients").textContent = summary.poseClientCount;
+  document.getElementById("stat-web-clients").textContent = summary.webClientCount;
+  document.getElementById("stat-var-count").textContent = summary.varCount;
+  document.getElementById("map-caption").textContent = `${summary.poseClientCount}`;
 }
 
-function renderClientDirectory() {
-  const el = document.getElementById('client-directory-display');
-  const rows = [];
-  for (const cno of getListedClientNos()) {
-    const mapping = idMappings[cno] || {};
-    if (!matchesClientFilter(cno, mapping)) continue;
-    rows.push({
-      cno,
-      deviceId: mapping.deviceId || '',
-      stealth: !!mapping.stealth,
-      hasPose: !!clients[cno],
-      variableCount: Object.keys(clientVars[cno] || {}).length
-    });
-  }
+function rowForClient(cno) {
+  const mapping = idMappings[cno] || {};
+  const pose = clients[cno] || {};
+  const vars = clientVars[cno] || {};
+  const head = pose.head?.pos;
+  return {
+    cno,
+    deviceId: mapping.deviceId || "",
+    type: mapping.stealth ? "stealth" : "standard",
+    hasPose: !!pose.head,
+    variableCount: Object.keys(vars).length,
+    position: head ? `${head.x.toFixed(2)}, ${head.y.toFixed(2)}, ${head.z.toFixed(2)}` : "-"
+  };
+}
 
+function renderParticipants() {
+  const el = document.getElementById("participants-grid");
+  const rows = getListedClientNos().filter(matchesClientFilter).map(rowForClient);
   if (rows.length === 0) {
-    el.innerHTML = `<div class="nv-empty">${getClientFilter() ? 'No clients match the filter' : 'No clients yet'}</div>`;
-    renderOverview();
+    el.innerHTML = `<div class="empty">${getClientFilter() ? "No match" : "No participants"}</div>`;
     return;
   }
 
-  let html = '<table class="nv-table directory-table"><tr><th>Client</th><th>Device ID</th><th>Type</th><th>Pose</th><th>Vars</th></tr>';
+  let html = "<table><thead><tr><th>Client</th><th>Device ID</th><th>Type</th><th>Pose</th><th>Vars</th><th>Position</th></tr></thead><tbody>";
   for (const row of rows) {
-    html += `<tr>
-      <td class="name">#${row.cno}</td>
-      <td class="device">${esc(shortDeviceId(row.deviceId))}</td>
-      <td class="state">${row.stealth ? 'stealth' : 'standard'}</td>
-      <td class="state">${row.hasPose ? 'active' : '-'}</td>
-      <td class="count">${row.variableCount}</td>
+    const selected = String(selectedClientNo) === String(row.cno) ? " selected" : "";
+    html += `<tr class="${selected}" ondblclick="selectClient('${esc(row.cno)}')">
+      <td class="mono">#${esc(row.cno)}</td>
+      <td class="mono device" title="${esc(row.deviceId)}">${esc(shortDeviceId(row.deviceId))}</td>
+      <td><span class="pill ${row.type === "stealth" ? "stealth" : ""}">${esc(row.type)}</span></td>
+      <td><span class="pill ${row.hasPose ? "active" : ""}">${row.hasPose ? "active" : "-"}</span></td>
+      <td class="mono">${row.variableCount}</td>
+      <td class="mono">${esc(row.position)}</td>
     </tr>`;
   }
-  html += '</table>';
+  html += "</tbody></table>";
   el.innerHTML = html;
-  renderOverview();
 }
 
-// ====== NV 表示 ======
 function renderGlobalVars() {
-  const el = document.getElementById('global-vars-display');
-  const keys = Object.keys(globalVars);
-  if (keys.length === 0) { el.innerHTML = '<div class="nv-empty">No global variables yet</div>'; return; }
-  let html = '<table class="nv-table"><tr><th>Name</th><th>Value</th><th>Writer</th></tr>';
-  for (const name of keys.sort()) {
+  const el = document.getElementById("global-vars-display");
+  const keys = Object.keys(globalVars).sort();
+  if (keys.length === 0) {
+    el.innerHTML = `<div class="empty">No variables</div>`;
+    return;
+  }
+  let html = "<table><thead><tr><th>Name</th><th>Value</th><th>Writer</th></tr></thead><tbody>";
+  for (const name of keys) {
     const v = globalVars[name];
-    html += `<tr><td class="name">${esc(name)}</td><td class="val">${esc(v.value)}</td><td class="meta">#${v.lastWriter}</td></tr>`;
+    html += `<tr><td class="mono">${esc(name)}</td><td class="mono">${esc(v.value)}</td><td class="mono">#${esc(v.lastWriter)}</td></tr>`;
   }
-  html += '</table>';
+  html += "</tbody></table>";
   el.innerHTML = html;
 }
 
-function renderClientVars() {
-  const el = document.getElementById('client-vars-display');
-  const clientNos = Object.keys(clientVars).sort((a,b) => Number(a)-Number(b));
-  const filteredClientNos = clientNos.filter(cno => matchesClientFilter(cno, idMappings[cno] || {}));
-  if (filteredClientNos.length === 0) { el.innerHTML = `<div class="nv-empty">${getClientFilter() ? 'No client variables match the filter' : 'No client variables yet'}</div>`; return; }
-  let html = '';
-  for (const cno of filteredClientNos) {
-    const mapping = idMappings[cno] || {};
-    const devId = shortDeviceId(mapping.deviceId);
-    const stealth = mapping.stealth ? ' (stealth)' : '';
-    const varNames = Object.keys(clientVars[cno] || {}).sort();
-    html += `<details class="client-section"><summary><div class="client-section-header">Client #${cno} ${esc(devId)}${stealth}</div><div class="client-section-meta">${varNames.length} vars${clients[cno] ? ' · pose active' : ''}</div></summary><div class="client-section-body">`;
-    html += '<table class="nv-table"><tr><th>Name</th><th>Value</th><th>Writer</th></tr>';
-    const vars = clientVars[cno];
-    for (const name of varNames) {
+function selectClient(cno) {
+  selectedClientNo = cno;
+  renderAll();
+}
+
+function clearSelection() {
+  selectedClientNo = null;
+  renderAll();
+}
+
+function renderDetail() {
+  const title = document.getElementById("detail-title");
+  const el = document.getElementById("detail-body");
+  if (!selectedClientNo || !getListedClientNos().includes(String(selectedClientNo))) {
+    title.textContent = "Details";
+    el.innerHTML = `<div class="detail-empty">Double-click a participant.</div>`;
+    return;
+  }
+
+  const cno = String(selectedClientNo);
+  const mapping = idMappings[cno] || {};
+  const pose = clients[cno] || {};
+  const vars = clientVars[cno] || {};
+  const head = pose.head?.pos;
+  title.textContent = `Client #${cno}`;
+
+  let html = "";
+  html += detailKv("Client No", `#${cno}`);
+  html += detailKv("Device ID", mapping.deviceId || "-");
+  html += detailKv("Type", mapping.stealth ? "stealth" : "standard");
+  html += detailKv("Pose", pose.head ? "active" : "-");
+  html += detailKv("Head", head ? `x ${head.x.toFixed(3)}, y ${head.y.toFixed(3)}, z ${head.z.toFixed(3)}` : "-");
+  html += `<div class="vars"><h3>Client Variables</h3>`;
+
+  const names = Object.keys(vars).sort();
+  if (names.length === 0) {
+    html += `<div class="empty">No variables</div>`;
+  } else {
+    html += "<table><thead><tr><th>Name</th><th>Value</th><th>Writer</th></tr></thead><tbody>";
+    for (const name of names) {
       const v = vars[name];
-      html += `<tr><td class="name">${esc(name)}</td><td class="val">${esc(v.value)}</td><td class="meta">#${v.lastWriter}</td></tr>`;
+      html += `<tr><td class="mono">${esc(name)}</td><td class="mono">${esc(v.value)}</td><td class="mono">#${esc(v.lastWriter)}</td></tr>`;
     }
-    html += '</table></div></details>';
+    html += "</tbody></table>";
   }
+
+  html += `</div>
+    <div class="editor">
+      <div class="editor-row">
+        <input type="text" id="set-cv-name" placeholder="name">
+        <input type="text" id="set-cv-value" placeholder="value">
+        <button onclick="setClientVar(${Number(cno)})">Set</button>
+      </div>
+      <div class="editor-row">
+        <input type="text" id="rpc-func" placeholder="function">
+        <input type="text" id="rpc-args" placeholder="args">
+        <button onclick="sendRpc(${Number(cno)})">RPC</button>
+      </div>
+    </div>`;
   el.innerHTML = html;
 }
 
-function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-
-function normalizeBridgeUrl(rawUrl) {
-  const trimmed = (rawUrl || '').trim();
-  if (!trimmed) return '';
-  return /^wss?:\/\//i.test(trimmed) ? trimmed : `ws://${trimmed}`;
+function detailKv(key, value) {
+  return `<div class="kv"><div class="k">${esc(key)}</div><div class="v mono">${esc(value)}</div></div>`;
 }
 
-function getBridgeHistory() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(BRIDGE_URL_HISTORY_KEY) || '[]');
-    return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
-  } catch {
-    return [];
-  }
+function renderAll() {
+  renderOverview();
+  renderParticipants();
+  renderGlobalVars();
+  renderDetail();
+  drawAvatars();
 }
-
-function getDefaultBridgeCandidates() {
-  const defaults = ['ws://localhost:8765', 'ws://127.0.0.1:8765'];
-  if (location.hostname && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-    defaults.unshift(`ws://${location.hostname}:8765`);
-  }
-  return Array.from(new Set(defaults));
-}
-
-function renderBridgeUrlCandidates() {
-  const select = document.getElementById('ws-url-candidates');
-  const history = [...getBridgeHistory(), ...getDefaultBridgeCandidates()];
-  const urls = Array.from(new Set(history.map(normalizeBridgeUrl).filter(Boolean)));
-  if (urls.length === 0) {
-    select.innerHTML = '<option value="">No saved URLs</option>';
-    select.disabled = true;
-    return;
-  }
-  select.disabled = false;
-  select.innerHTML = urls.map(url => `<option value="${esc(url)}">${esc(url)}</option>`).join('');
-}
-
-function saveBridgeUrlToHistory(rawUrl) {
-  const normalized = normalizeBridgeUrl(rawUrl);
-  if (!normalized) return '';
-  const history = [normalized, ...getBridgeHistory().filter(url => normalizeBridgeUrl(url) !== normalized)]
-    .slice(0, MAX_BRIDGE_URL_HISTORY);
-  localStorage.setItem(BRIDGE_URL_STORAGE_KEY, normalized);
-  localStorage.setItem(BRIDGE_URL_HISTORY_KEY, JSON.stringify(history));
-  renderBridgeUrlCandidates();
-  return normalized;
-}
-
-function useSelectedBridgeUrl() {
-  const select = document.getElementById('ws-url-candidates');
-  if (!select.value) return;
-  document.getElementById('ws-url').value = select.value;
-}
-
-function saveCurrentBridgeUrl() {
-  const rawUrl = document.getElementById('ws-url').value;
-  const normalized = normalizeBridgeUrl(rawUrl);
-  if (!normalized) {
-    log('Bridge URL required', 'err');
-    return;
-  }
-  document.getElementById('ws-url').value = saveBridgeUrlToHistory(normalized);
-  log(`Saved bridge URL: ${normalized}`);
-}
-
-function clearSavedBridgeUrls() {
-  localStorage.removeItem(BRIDGE_URL_HISTORY_KEY);
-  renderBridgeUrlCandidates();
-  log('Cleared saved bridge URLs');
-}
-
-function initializeBridgeUrlUi() {
-  const urlInput = document.getElementById('ws-url');
-  const savedUrl = normalizeBridgeUrl(localStorage.getItem(BRIDGE_URL_STORAGE_KEY) || '');
-  if (savedUrl) {
-    urlInput.value = savedUrl;
-  }
-  urlInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      connect();
-    }
-  });
-  renderBridgeUrlCandidates();
-}
-
-// ====== WebSocket ======
-function connect() {
-  const url = normalizeBridgeUrl(document.getElementById('ws-url').value);
-  if (!url) {
-    log('Bridge URL required', 'err');
-    return;
-  }
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') {
-      throw new Error('Invalid protocol');
-    }
-  } catch {
-    log(`Invalid WebSocket URL: ${url}`, 'err');
-    return;
-  }
-  document.getElementById('ws-url').value = url;
-  saveBridgeUrlToHistory(url);
-  if (ws && ws.readyState <= 1) ws.close();
-  ws = new WebSocket(url);
-  ws.onopen = () => { setStatus(true); log('Connected'); };
-  ws.onclose = () => { setStatus(false); log('Disconnected'); };
-  ws.onerror = () => { log('WebSocket error', 'err'); };
-  ws.onmessage = (e) => handleMessage(JSON.parse(e.data));
-}
-function disconnect() { if (ws) ws.close(); }
 
 function handleMessage(msg) {
   switch (msg.type) {
-    case 'room_pose':
+    case "room_pose": {
       const alive = new Set();
-      for (const c of msg.clients) { alive.add(c.clientNo); clients[c.clientNo] = c; }
-      for (const cno of Object.keys(clients)) { if (!alive.has(Number(cno))) delete clients[cno]; }
-      roomSummary.poseClientCount = msg.clients.length;
+      for (const c of msg.clients || []) {
+        alive.add(Number(c.clientNo));
+        clients[c.clientNo] = c;
+      }
+      for (const cno of Object.keys(clients)) {
+        if (!alive.has(Number(cno))) delete clients[cno];
+      }
+      roomSummary.poseClientCount = (msg.clients || []).length;
       roomSummary.roomClientCount = Object.keys(idMappings).length > 0
         ? Object.values(idMappings).filter(m => !m.stealth).length
-        : msg.clients.length;
-      drawAvatars();
-      renderClientDirectory();
+        : (msg.clients || []).length;
+      renderAll();
       break;
-
-    case 'bridge_status':
+    }
+    case "bridge_status":
       roomSummary = { ...roomSummary, ...(msg.roomSummary || {}) };
-      renderOverview();
+      renderAll();
       break;
-
-    case 'rpc':
-      log(`RPC from #${msg.senderClientNo}: ${msg.functionName}(${msg.args.join(', ')})`);
-      break;
-
-    case 'id_mapping':
+    case "id_mapping":
       idMappings = {};
-      for (const m of msg.mappings) idMappings[m.clientNo] = m;
-      roomSummary.roomClientCount = msg.mappings.filter(m => !m.stealth).length;
-      log(`ID mapping: ${msg.mappings.length} clients (server ${msg.serverVersion})`);
-      renderClientDirectory();
-      renderClientVars();
+      for (const m of msg.mappings || []) idMappings[m.clientNo] = m;
+      roomSummary.roomClientCount = (msg.mappings || []).filter(m => !m.stealth).length;
+      renderAll();
       break;
-
-    case 'global_var_sync':
-      for (const v of msg.variables) {
+    case "global_var_sync":
+      for (const v of msg.variables || []) {
         globalVars[v.name] = { value: v.value, timestamp: v.timestamp, lastWriter: v.lastWriter };
       }
-      renderGlobalVars();
-      log(`Global vars synced: ${msg.variables.length} vars`);
+      renderAll();
       break;
-
-    case 'client_var_sync':
-      for (const [cno, vars] of Object.entries(msg.clientVariables)) {
+    case "client_var_sync":
+      for (const [cno, vars] of Object.entries(msg.clientVariables || {})) {
         if (!clientVars[cno]) clientVars[cno] = {};
         for (const v of vars) {
           clientVars[cno][v.name] = { value: v.value, timestamp: v.timestamp, lastWriter: v.lastWriter };
         }
       }
-      renderClientDirectory();
-      renderClientVars();
-      log(`Client vars synced: ${Object.keys(msg.clientVariables).length} clients`);
+      renderAll();
       break;
-
-    case 'nv_snapshot':
-      // ★ 接続時・リフレッシュ時のスナップショット
-      globalVars = {};
-      for (const [name, v] of Object.entries(msg.globalVariables || {})) {
-        globalVars[name] = v;
-      }
-      clientVars = {};
-      for (const [cno, vars] of Object.entries(msg.clientVariables || {})) {
-        clientVars[cno] = vars;
-      }
+    case "nv_snapshot":
+      globalVars = msg.globalVariables || {};
+      clientVars = msg.clientVariables || {};
       idMappings = {};
-      for (const m of (msg.idMappings || [])) {
-        idMappings[m.clientNo] = m;
-      }
+      for (const m of msg.idMappings || []) idMappings[m.clientNo] = m;
       roomSummary = { ...roomSummary, ...(msg.roomSummary || {}) };
-      renderGlobalVars();
-      renderClientDirectory();
-      renderClientVars();
-      log('NV snapshot received');
+      renderAll();
+      break;
+    case "rpc":
+      toast(`RPC #${msg.senderClientNo}: ${msg.functionName}`);
       break;
   }
 }
 
-function requestSnapshot() {
-  if (!ws || ws.readyState !== 1) { log('Not connected', 'err'); return; }
-  ws.send(JSON.stringify({ action: 'get_snapshot' }));
-}
-
-// ====== Send ======
-function sendRpc() {
-  if (!ws || ws.readyState !== 1) { log('Not connected', 'err'); return; }
-  const func = document.getElementById('rpc-func').value;
-  const args = document.getElementById('rpc-args').value.split(',').map(s => s.trim());
-  ws.send(JSON.stringify({ action: 'rpc', functionName: func, args }));
-  log(`Sent RPC: ${func}(${args.join(', ')})`);
+function sendRpc(targetClientNo) {
+  if (!ws || ws.readyState !== 1) {
+    toast("Not connected", true);
+    return;
+  }
+  const func = document.getElementById("rpc-func")?.value.trim();
+  const rawArgs = document.getElementById("rpc-args")?.value || "";
+  if (!func) {
+    toast("Function required", true);
+    return;
+  }
+  const args = rawArgs ? rawArgs.split(",").map(s => s.trim()) : [];
+  const msg = { action: "rpc", functionName: func, args };
+  if (targetClientNo) msg.targetClientNos = [targetClientNo];
+  ws.send(JSON.stringify(msg));
+  toast("RPC sent");
 }
 
 function setGlobalVar() {
-  if (!ws || ws.readyState !== 1) { log('Not connected', 'err'); return; }
-  const name = document.getElementById('set-gv-name').value;
-  const value = document.getElementById('set-gv-value').value;
-  if (!name) { log('Name required', 'err'); return; }
-  ws.send(JSON.stringify({ action: 'set_global_var', name, value }));
-  log(`Set global: ${name} = ${value}`);
+  if (!ws || ws.readyState !== 1) {
+    toast("Not connected", true);
+    return;
+  }
+  const name = document.getElementById("set-gv-name").value.trim();
+  const value = document.getElementById("set-gv-value").value;
+  if (!name) {
+    toast("Name required", true);
+    return;
+  }
+  ws.send(JSON.stringify({ action: "set_global_var", name, value }));
+  document.getElementById("set-gv-name").value = "";
+  document.getElementById("set-gv-value").value = "";
+  toast("Global variable sent");
 }
 
-function setClientVar() {
-  if (!ws || ws.readyState !== 1) { log('Not connected', 'err'); return; }
-  const cno = parseInt(document.getElementById('set-cv-clientno').value);
-  const name = document.getElementById('set-cv-name').value;
-  const value = document.getElementById('set-cv-value').value;
-  if (isNaN(cno) || !name) { log('clientNo and name required', 'err'); return; }
-  ws.send(JSON.stringify({ action: 'set_client_var', targetClientNo: cno, name, value }));
-  log(`Set client #${cno}: ${name} = ${value}`);
+function setClientVar(targetClientNo) {
+  if (!ws || ws.readyState !== 1) {
+    toast("Not connected", true);
+    return;
+  }
+  const name = document.getElementById("set-cv-name")?.value.trim();
+  const value = document.getElementById("set-cv-value")?.value || "";
+  if (!targetClientNo || !name) {
+    toast("Client and name required", true);
+    return;
+  }
+  ws.send(JSON.stringify({ action: "set_client_var", targetClientNo, name, value }));
+  document.getElementById("set-cv-name").value = "";
+  document.getElementById("set-cv-value").value = "";
+  toast("Client variable sent");
 }
 
-// ====== Canvas ======
 function drawAvatars() {
-  const canvas = document.getElementById('avatar-canvas');
-  const ctx = canvas.getContext('2d');
-  const W = canvas.width, H = canvas.height;
-  const activeClientCount = Object.keys(clients).length;
-  const denseMode = activeClientCount > 24;
-
+  const canvas = document.getElementById("avatar-canvas");
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width;
+  const H = canvas.height;
   ctx.clearRect(0, 0, W, H);
 
-  // --- 全クライアントの座標を収集 ---
-  const points = []; // {x, z} (ワールド座標)
-  for (const [cno, d] of Object.entries(clients)) {
+  const points = [];
+  for (const d of Object.values(clients)) {
     if (!d.head) continue;
-    const hx = d.head.pos.x, hz = d.head.pos.z;
-    points.push({ x: hx, z: hz });
-    if (d.right) {
-      points.push({ x: hx + d.right.relPos.x, z: hz + d.right.relPos.z });
-    }
-    if (d.left) {
-      points.push({ x: hx + d.left.relPos.x, z: hz + d.left.relPos.z });
-    }
+    points.push({ x: d.head.pos.x, z: d.head.pos.z });
   }
 
-  // プレイヤーがいなければグリッドだけ描画
+  ctx.fillStyle = "#0c1017";
+  ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = "#1d2635";
+  ctx.lineWidth = 1;
+  for (let x = 0; x <= W; x += 40) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, H);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= H; y += 40) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
+  }
+
   if (points.length === 0) {
-    const scale = 40;
-    ctx.strokeStyle = '#1a2a4a'; ctx.lineWidth = 0.5;
-    for (let x = 0; x < W; x += scale) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
-    for (let y = 0; y < H; y += scale) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
-    ctx.fillStyle = '#484f58'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('No clients', W/2, H/2);
-    renderOverview();
+    ctx.fillStyle = "#687386";
+    ctx.font = "12px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("No pose", W / 2, H / 2);
     return;
   }
 
-  // --- バウンディングボックス ---
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
   for (const p of points) {
-    if (p.x < minX) minX = p.x;
-    if (p.x > maxX) maxX = p.x;
-    if (p.z < minZ) minZ = p.z;
-    if (p.z > maxZ) maxZ = p.z;
+    minX = Math.min(minX, p.x);
+    maxX = Math.max(maxX, p.x);
+    minZ = Math.min(minZ, p.z);
+    maxZ = Math.max(maxZ, p.z);
   }
-
-  // 最低でも 2m × 2m の範囲を確保（1人だけの時にズームしすぎない）
-  const MIN_RANGE = 2.0;
-  const rangeX = Math.max(maxX - minX, MIN_RANGE);
-  const rangeZ = Math.max(maxZ - minZ, MIN_RANGE);
+  const rangeX = Math.max(maxX - minX, 2);
+  const rangeZ = Math.max(maxZ - minZ, 2);
   const centerX = (minX + maxX) / 2;
   const centerZ = (minZ + maxZ) / 2;
+  const scale = Math.min((W * 0.78) / rangeX, (H * 0.72) / rangeZ);
+  const toX = wx => W / 2 + (wx - centerX) * scale;
+  const toY = wz => H / 2 - (wz - centerZ) * scale;
 
-  // --- スケール計算（余白20%確保） ---
-  const padding = 0.8; // 描画領域の80%を使用
-  const scaleX = (W * padding) / rangeX;
-  const scaleZ = (H * padding) / rangeZ;
-  const scale = Math.min(scaleX, scaleZ);
-
-  // ワールド座標 → キャンバス座標
-  const toCanvasX = (wx) => W / 2 + (wx - centerX) * scale;
-  const toCanvasY = (wz) => H / 2 - (wz - centerZ) * scale; // Z正方向 = 画面上
-
-  // --- グリッド（1m単位、スケールに応じて間隔調整） ---
-  // 見やすいグリッド間隔を自動選択: 1, 2, 5, 10, 20, 50, ...
-  const rawGridStep = 40 / scale; // 画面上で約40pxになるワールド距離
-  const magnitude = Math.pow(10, Math.floor(Math.log10(rawGridStep)));
-  const candidates = [1, 2, 5, 10];
-  let gridStep = magnitude;
-  for (const c of candidates) {
-    if (c * magnitude >= rawGridStep) { gridStep = c * magnitude; break; }
-  }
-
-  ctx.strokeStyle = '#1a2a4a';
-  ctx.lineWidth = 0.5;
-
-  // 縦線
-  const gridStartX = Math.floor((centerX - rangeX) / gridStep) * gridStep;
-  const gridEndX = Math.ceil((centerX + rangeX) / gridStep) * gridStep;
-  for (let gx = gridStartX; gx <= gridEndX; gx += gridStep) {
-    const cx = toCanvasX(gx);
-    if (cx < 0 || cx > W) continue;
-    ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, H); ctx.stroke();
-  }
-
-  // 横線
-  const gridStartZ = Math.floor((centerZ - rangeZ) / gridStep) * gridStep;
-  const gridEndZ = Math.ceil((centerZ + rangeZ) / gridStep) * gridStep;
-  for (let gz = gridStartZ; gz <= gridEndZ; gz += gridStep) {
-    const cy = toCanvasY(gz);
-    if (cy < 0 || cy > H) continue;
-    ctx.beginPath(); ctx.moveTo(0, cy); ctx.lineTo(W, cy); ctx.stroke();
-  }
-
-  // 原点マーカー
-  const ox = toCanvasX(0), oy = toCanvasY(0);
-  if (ox > -20 && ox < W + 20 && oy > -20 && oy < H + 20) {
-    ctx.strokeStyle = '#30363d'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(ox - 6, oy); ctx.lineTo(ox + 6, oy); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(ox, oy - 6); ctx.lineTo(ox, oy + 6); ctx.stroke();
-  }
-
-  // --- スケール表示 ---
-  ctx.fillStyle = '#484f58'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left';
-  const scaleBarWorld = gridStep;
-  const scaleBarPx = scaleBarWorld * scale;
-  const sbx = 12, sby = H - 12;
-  ctx.strokeStyle = '#484f58'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(sbx, sby); ctx.lineTo(sbx + scaleBarPx, sby); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(sbx, sby - 3); ctx.lineTo(sbx, sby + 3); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(sbx + scaleBarPx, sby - 3); ctx.lineTo(sbx + scaleBarPx, sby + 3); ctx.stroke();
-  ctx.fillText(`${scaleBarWorld}m`, sbx + scaleBarPx + 4, sby + 4);
-
-  if (denseMode) {
-    ctx.fillStyle = '#8b949e'; ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
-    ctx.fillText('Dense mode: labels and hand markers simplified', W - 12, 18);
-  }
-
-  // --- プレイヤー描画 ---
   for (const [cno, d] of Object.entries(clients)) {
     if (!d.head) continue;
-    const color = `hsl(${(Number(cno) * 47) % 360} 80% 60%)`;
-    const hx = toCanvasX(d.head.pos.x);
-    const hy = toCanvasY(d.head.pos.z);
-
-    // Head
-    ctx.fillStyle = color;
-    ctx.beginPath(); ctx.arc(hx, hy, denseMode ? 4 : 7, 0, Math.PI * 2); ctx.fill();
-
-    // Label
-    if (!denseMode) {
-      ctx.fillStyle = '#fff'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left';
-      ctx.fillText(`#${cno}`, hx + 10, hy + 3);
-    }
-
-    // Right hand
-    if (!denseMode && d.right) {
-      const rx = toCanvasX(d.head.pos.x + d.right.relPos.x);
-      const ry = toCanvasY(d.head.pos.z + d.right.relPos.z);
-      ctx.fillStyle = color; ctx.globalAlpha = 0.5;
-      ctx.beginPath(); ctx.arc(rx, ry, 3, 0, Math.PI * 2); ctx.fill();
-      ctx.globalAlpha = 1;
-    }
-
-    // Left hand
-    if (!denseMode && d.left) {
-      const lx = toCanvasX(d.head.pos.x + d.left.relPos.x);
-      const ly = toCanvasY(d.head.pos.z + d.left.relPos.z);
-      ctx.fillStyle = color; ctx.globalAlpha = 0.5;
-      ctx.beginPath(); ctx.arc(lx, ly, 3, 0, Math.PI * 2); ctx.fill();
-      ctx.globalAlpha = 1;
-    }
+    const selected = String(cno) === String(selectedClientNo);
+    const x = toX(d.head.pos.x);
+    const y = toY(d.head.pos.z);
+    ctx.fillStyle = selected ? "#ff4d68" : `hsl(${(Number(cno) * 47) % 360} 80% 62%)`;
+    ctx.beginPath();
+    ctx.arc(x, y, selected ? 8 : 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#e8edf2";
+    ctx.font = "11px sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText(`#${cno}`, x + 9, y + 4);
   }
-
-  renderOverview();
 }
 
-renderOverview();
+renderAll();
 initializeBridgeUrlUi();
-
 </script>
 </body>
 </html>

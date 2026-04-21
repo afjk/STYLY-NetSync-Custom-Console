@@ -11,9 +11,13 @@
 from __future__ import annotations
 
 import asyncio
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
+from pathlib import Path
 import socket
 import struct
+import threading
 import time
 import uuid
 
@@ -48,6 +52,8 @@ ENCODING_FLAGS_DEFAULT = 0x1F
 DISCOVERY_REQUEST = "STYLY-NETSYNC-DISCOVER"
 DISCOVERY_RESPONSE_PREFIX = "STYLY-NETSYNC"
 DEFAULT_SERVER_DISCOVERY_PORT = 9999
+DEFAULT_HTTP_PORT = 8080
+WEB_CLIENT_FILENAME = "NetSyncWebClient.html"
 
 
 def ensure_runtime_dependencies():
@@ -415,6 +421,52 @@ def discover_netsync_server(discovery_port: int = DEFAULT_SERVER_DISCOVERY_PORT,
                 pass
 
 
+class QuietWebClientHandler(SimpleHTTPRequestHandler):
+    """Serve the console HTML without noisy per-request access logs."""
+
+    def log_message(self, format: str, *args) -> None:
+        return
+
+    def do_GET(self) -> None:
+        if self.path in {"", "/"}:
+            self.path = f"/{WEB_CLIENT_FILENAME}"
+        super().do_GET()
+
+
+class WebClientHttpServer:
+    def __init__(self, host: str, port: int, directory: Path) -> None:
+        self.host = host
+        self.port = port
+        self.directory = directory
+        self._server: ThreadingHTTPServer | None = None
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        handler = partial(QuietWebClientHandler, directory=str(self.directory))
+        self._server = ThreadingHTTPServer((self.host, self.port), handler)
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+        self._print_urls()
+
+    def stop(self) -> None:
+        if self._server is not None:
+            self._server.shutdown()
+            self._server.server_close()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+
+    def _print_urls(self) -> None:
+        port = self._server.server_port if self._server is not None else self.port
+        if self.host in {"0.0.0.0", "::", ""}:
+            candidates = [f"http://127.0.0.1:{port}/"]
+            candidates.extend(f"http://{ip}:{port}/" for ip in get_lan_ipv4_candidates())
+            print("[HTTP] Web console URLs:")
+            for url in candidates:
+                print(f"  - {url}")
+        else:
+            print(f"[HTTP] Web console URL: http://{self.host}:{port}/")
+
+
 # --- Bridge Core ---
 
 class WebBridge:
@@ -666,12 +718,29 @@ class WebBridge:
     async def run(self, ws_host="0.0.0.0", ws_port=8765,
                   discover=False,
                   discovery_port=DEFAULT_SERVER_DISCOVERY_PORT,
-                  discovery_timeout=3.0):
+                  discovery_timeout=3.0,
+                  http_host="0.0.0.0",
+                  http_port=DEFAULT_HTTP_PORT,
+                  http_enabled=True):
         self.ensure_server_endpoint(
             discover=discover,
             discovery_port=discovery_port,
             discovery_timeout=discovery_timeout,
         )
+        http_server = None
+        if http_enabled:
+            web_root = Path(__file__).resolve().parent
+            web_client = web_root / WEB_CLIENT_FILENAME
+            if web_client.exists():
+                http_server = WebClientHttpServer(http_host, http_port, web_root)
+                try:
+                    http_server.start()
+                except OSError as exc:
+                    http_server = None
+                    print(f"[HTTP] Skipped. Failed to bind {http_host}:{http_port}: {exc}")
+            else:
+                print(f"[HTTP] Skipped. Missing {web_client}")
+
         print(f"[Bridge] Starting on ws://{ws_host}:{ws_port}")
         if ws_host in {"0.0.0.0", "::", ""}:
             candidates = [f"ws://127.0.0.1:{ws_port}"]
@@ -683,14 +752,18 @@ class WebBridge:
         else:
             print(f"[Bridge] Reachable URL: ws://{ws_host}:{ws_port}")
         asyncio.create_task(self.zmq_subscriber())
-        async with websockets.serve(self.handle_ws_client, ws_host, ws_port):
-            await asyncio.Future()
+        try:
+            async with websockets.serve(self.handle_ws_client, ws_host, ws_port):
+                await asyncio.Future()
+        finally:
+            if http_server is not None:
+                http_server.stop()
 
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--server", default="tcp://localhost")
+    parser.add_argument("--server", default="auto")
     parser.add_argument("--dealer-port", type=int, default=5555)
     parser.add_argument("--sub-port", type=int, default=5556)
     parser.add_argument("--discover", action="store_true")
@@ -699,6 +772,9 @@ if __name__ == "__main__":
     parser.add_argument("--room", default="default_room")
     parser.add_argument("--ws-host", default="0.0.0.0")
     parser.add_argument("--ws-port", type=int, default=8765)
+    parser.add_argument("--http-host", default="0.0.0.0")
+    parser.add_argument("--http-port", type=int, default=DEFAULT_HTTP_PORT)
+    parser.add_argument("--no-http", action="store_true")
     args = parser.parse_args()
 
     ensure_runtime_dependencies()
@@ -712,6 +788,9 @@ if __name__ == "__main__":
                 discover=args.discover,
                 discovery_port=args.server_discovery_port,
                 discovery_timeout=args.discovery_timeout,
+                http_host=args.http_host,
+                http_port=args.http_port,
+                http_enabled=not args.no_http,
             )
         )
     except RuntimeError as exc:
