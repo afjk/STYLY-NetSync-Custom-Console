@@ -779,6 +779,33 @@ class DummyAvatarManager:
         for avatar in self.avatars:
             avatar.add_target(tx, tz)
 
+    def move_one_to(self, index: int, tx: float, tz: float) -> None:
+        if 0 <= index < len(self.avatars):
+            self.avatars[index].set_target(tx, tz)
+
+    def add_waypoint_one(self, index: int, tx: float, tz: float) -> None:
+        if 0 <= index < len(self.avatars):
+            self.avatars[index].add_target(tx, tz)
+
+    def despawn_one(self, index: int) -> bool:
+        if index < 0 or index >= len(self.avatars):
+            return False
+        avatar = self.avatars.pop(index)
+        avatar.close()
+        return True
+
+    def _build_dummy_list(self) -> list[dict]:
+        return [
+            {
+                "index": i,
+                "deviceId": avatar.device_id,
+                "x": avatar.phys_x + avatar.loco_x,
+                "z": avatar.phys_z + avatar.loco_z,
+                "hasTarget": len(avatar.targets) > 0,
+            }
+            for i, avatar in enumerate(self.avatars)
+        ]
+
     async def _send_loop(self) -> None:
         last_tick = time.monotonic()
         room_bytes = self.bridge.room_id.encode("utf-8")
@@ -871,6 +898,7 @@ class WebBridge:
             "idMappings": self.id_mappings,
             "roomSummary": self._build_room_summary(),
             "dummyCount": self.dummy_manager.count,
+            "dummies": self.dummy_manager._build_dummy_list(),
         })
 
     def _build_bridge_status(self) -> str:
@@ -942,6 +970,24 @@ class WebBridge:
             return
 
         json_str = json.dumps({"type": "dummy_status", "count": self.dummy_manager.count})
+        disconnected = []
+        for ws in list(self.ws_clients.keys()):
+            try:
+                await ws.send(json_str)
+            except websockets.ConnectionClosed:
+                disconnected.append(ws)
+        for ws in disconnected:
+            del self.ws_clients[ws]
+
+    async def _broadcast_dummy_list(self):
+        if not self.ws_clients:
+            return
+
+        json_str = json.dumps({
+            "type": "dummy_list",
+            "dummies": self.dummy_manager._build_dummy_list(),
+            "count": self.dummy_manager.count,
+        })
         disconnected = []
         for ws in list(self.ws_clients.keys()):
             try:
@@ -1068,16 +1114,37 @@ class WebBridge:
                         float(msg.get("radius", 0.0)),
                     )
                     await self._broadcast_dummy_status()
+                    await self._broadcast_dummy_list()
 
                 elif action == "despawn_dummies":
                     self.dummy_manager.despawn_all()
                     await self._broadcast_dummy_status()
+                    await self._broadcast_dummy_list()
 
                 elif action == "move_dummies_to":
                     self.dummy_manager.move_all_to(float(msg.get("x", 0.0)), float(msg.get("z", 0.0)))
 
                 elif action == "add_waypoint":
                     self.dummy_manager.add_waypoint(float(msg.get("x", 0.0)), float(msg.get("z", 0.0)))
+
+                elif action == "move_one_to":
+                    self.dummy_manager.move_one_to(
+                        int(msg.get("index", -1)),
+                        float(msg.get("x", 0.0)),
+                        float(msg.get("z", 0.0)),
+                    )
+
+                elif action == "add_waypoint_one":
+                    self.dummy_manager.add_waypoint_one(
+                        int(msg.get("index", -1)),
+                        float(msg.get("x", 0.0)),
+                        float(msg.get("z", 0.0)),
+                    )
+
+                elif action == "despawn_one":
+                    self.dummy_manager.despawn_one(int(msg.get("index", -1)))
+                    await self._broadcast_dummy_status()
+                    await self._broadcast_dummy_list()
 
         except websockets.ConnectionClosed:
             pass

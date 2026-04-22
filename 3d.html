@@ -54,6 +54,10 @@
     color: #9aa7ba;
     font-size: 12px;
   }
+  .selection {
+    color: #d7deea;
+    font-size: 12px;
+  }
   .log {
     max-height: 220px;
     overflow: auto;
@@ -88,17 +92,23 @@
       <span class="label">WebSocket</span>
       <input id="ws-url" type="text" value="">
       <button id="connect-btn">Connect</button>
+      <button id="open-console-btn" type="button">2D Console</button>
     </div>
     <div class="status" id="status-text">Disconnected</div>
     <div class="row">
       <span class="label">Dummy</span>
       <input id="dummy-count" type="number" value="20" min="1" placeholder="Count">
-      <input id="dummy-radius" type="number" value="3" min="0" step="0.1" placeholder="Radius">
+      <input id="dummy-radius" type="number" value="5" min="0" step="0.1" placeholder="Radius">
     </div>
     <div class="button-row">
       <button id="spawn-btn">Spawn</button>
       <button id="spawn-50-btn">+50</button>
       <button id="clear-btn">Clear</button>
+    </div>
+    <div class="button-row">
+      <div class="selection" id="selection-text" style="flex:1 1 auto;">Selected: (none)</div>
+      <button id="remove-btn" disabled>Remove</button>
+      <button id="deselect-btn" disabled>Deselect</button>
     </div>
     <div class="button-row">
       <button data-mode="virtual" class="mode-btn active">Virtual</button>
@@ -184,6 +194,9 @@ let dummyCount = 0;
 let lastHandleSendAt = 0;
 const avatars = new Map();
 const logEntries = [];
+let idMappings = {};
+let dummies = [];
+let selectedDummyIndex = null;
 
 function defaultWsUrl() {
   if (location.hostname && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
@@ -237,15 +250,19 @@ function clearDummies() {
     addLog("clear ignored: websocket disconnected");
     return;
   }
+  selectedDummyIndex = null;
+  updateSelectionUi();
   addLog("despawn requested");
 }
 
 function sendHandleTarget(final = false) {
-  if (!sendJson({
-    action: "move_dummies_to",
+  const payload = {
+    action: selectedDummyIndex != null ? "move_one_to" : "move_dummies_to",
     x: handleGroup.position.x,
     z: handleGroup.position.z
-  })) {
+  };
+  if (selectedDummyIndex != null) payload.index = selectedDummyIndex;
+  if (!sendJson(payload)) {
     return;
   }
   if (final) {
@@ -289,12 +306,9 @@ function createAvatarGroup(clientNo) {
 
   const virtualAnchor = new THREE.Group();
   const physicalAnchor = new THREE.Group();
-  const virtualSpheres = [];
-
   const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0x4f92ff, roughness: 0.45, metalness: 0.05 });
   const handMaterial = new THREE.MeshStandardMaterial({ color: 0x8bb7ff, roughness: 0.45 });
   const physicalMaterial = new THREE.MeshStandardMaterial({ color: 0xb9c6d8, transparent: true, opacity: 0.25 });
-  const virtualMaterial = new THREE.MeshStandardMaterial({ color: 0xffd84f, emissive: 0x8f6e00, emissiveIntensity: 0.8 });
 
   const virtualBody = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 0.9, 16), bodyMaterial);
   virtualBody.position.y = -0.45;
@@ -313,14 +327,15 @@ function createAvatarGroup(clientNo) {
   );
   physicalRing.rotation.x = -Math.PI / 2;
   physicalRing.position.y = -1.05;
+  const selectionRing = new THREE.Mesh(
+    new THREE.RingGeometry(0.4, 0.58, 40),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
+  );
+  selectionRing.rotation.x = -Math.PI / 2;
+  selectionRing.position.y = -1.03;
+  selectionRing.visible = false;
   physicalAnchor.add(physicalBody, physicalHead, physicalRing);
-
-  for (let i = 0; i < 5; i += 1) {
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.08, 16, 12), virtualMaterial);
-    mesh.visible = false;
-    virtualSpheres.push(mesh);
-    group.add(mesh);
-  }
+  group.add(selectionRing);
 
   const label = createLabelSprite(`#${clientNo}`);
   group.add(virtualAnchor, physicalAnchor, label);
@@ -332,9 +347,9 @@ function createAvatarGroup(clientNo) {
     physicalAnchor,
     rightHand,
     leftHand,
-    virtualSpheres,
     label,
-    physicalMaterials: [physicalBody.material, physicalHead.material]
+    physicalMaterials: [physicalBody.material, physicalHead.material],
+    selectionRing
   };
 
   applyModeToAvatar(group);
@@ -342,10 +357,9 @@ function createAvatarGroup(clientNo) {
 }
 
 function applyModeToAvatar(group) {
-  const { virtualAnchor, physicalAnchor, virtualSpheres, physicalMaterials } = group.userData;
+  const { virtualAnchor, physicalAnchor, physicalMaterials } = group.userData;
   const showVirtual = currentMode !== "physical";
   const showPhysical = currentMode !== "virtual";
-  const showVirtualSpheres = currentMode !== "physical";
   const physicalOpacity = currentMode === "physical" ? 1.0 : 0.25;
 
   virtualAnchor.visible = showVirtual;
@@ -353,9 +367,6 @@ function applyModeToAvatar(group) {
   physicalMaterials.forEach(material => {
     material.transparent = physicalOpacity < 1;
     material.opacity = physicalOpacity;
-  });
-  virtualSpheres.forEach(mesh => {
-    mesh.visible = showVirtualSpheres && mesh.userData.active;
   });
 }
 
@@ -384,19 +395,7 @@ function updateAvatar(client) {
 
   group.userData.physicalAnchor.position.set(physical.x, physical.y, physical.z);
   group.userData.label.position.set(head.x, head.y + 0.7, head.z);
-
-  const virtuals = client.virtuals || [];
-  group.userData.virtualSpheres.forEach((mesh, index) => {
-    const data = virtuals[index];
-    mesh.userData.active = !!data;
-    mesh.visible = !!data && currentMode !== "physical";
-    if (!data) return;
-    mesh.position.set(
-      head.x + (data.relPos?.x || 0),
-      head.y + (data.relPos?.y || 0),
-      head.z + (data.relPos?.z || 0)
-    );
-  });
+  group.userData.selectionRing.position.set(physical.x, Math.max(0.02, physical.y - 1.02), physical.z);
 }
 
 function removeAvatar(clientNo) {
@@ -405,6 +404,56 @@ function removeAvatar(clientNo) {
   if (!group) return;
   scene.remove(group);
   avatars.delete(key);
+}
+
+function getDummyClientNo(dummyIndex) {
+  const dummy = dummies[dummyIndex];
+  if (!dummy) return null;
+  for (const [cno, mapping] of Object.entries(idMappings)) {
+    if (mapping.deviceId === dummy.deviceId) return Number(cno);
+  }
+  return null;
+}
+
+function getDummyIndexByClientNo(clientNo) {
+  const mapping = idMappings[String(clientNo)];
+  if (!mapping?.deviceId) return null;
+  const index = dummies.findIndex(dummy => dummy.deviceId === mapping.deviceId);
+  return index >= 0 ? index : null;
+}
+
+function updateSelectionUi() {
+  const hasSelection = selectedDummyIndex != null && !!dummies[selectedDummyIndex];
+  document.getElementById("selection-text").textContent = `Selected: ${hasSelection ? `Dummy #${selectedDummyIndex}` : "(none)"}`;
+  document.getElementById("remove-btn").disabled = !hasSelection;
+  document.getElementById("deselect-btn").disabled = !hasSelection;
+  updateSelectionHighlight();
+}
+
+function updateSelectionHighlight() {
+  const selectedClientNo = selectedDummyIndex != null ? getDummyClientNo(selectedDummyIndex) : null;
+  avatars.forEach((group, clientNo) => {
+    group.userData.selectionRing.visible = Number(clientNo) === selectedClientNo;
+  });
+}
+
+function setSelectedDummy(index) {
+  selectedDummyIndex = selectedDummyIndex === index ? null : index;
+  updateSelectionUi();
+}
+
+function removeSelectedDummy() {
+  if (selectedDummyIndex == null) {
+    addLog("remove ignored: no selection");
+    return;
+  }
+  if (!sendJson({ action: "despawn_one", index: selectedDummyIndex })) {
+    addLog("remove ignored: websocket disconnected");
+    return;
+  }
+  selectedDummyIndex = null;
+  updateSelectionUi();
+  addLog("despawn one requested");
 }
 
 function handleMessage(msg) {
@@ -419,9 +468,13 @@ function handleMessage(msg) {
       for (const clientNo of [...avatars.keys()]) {
         if (!alive.has(clientNo)) removeAvatar(clientNo);
       }
+      updateSelectionHighlight();
       break;
     }
     case "id_mapping":
+      idMappings = {};
+      for (const mapping of msg.mappings || []) idMappings[mapping.clientNo] = mapping;
+      updateSelectionHighlight();
       addLog(`id_mapping ${msg.mappings?.length || 0}`);
       break;
     case "global_var_sync":
@@ -435,8 +488,25 @@ function handleMessage(msg) {
       setStatus(ws && ws.readyState === 1 ? "Connected" : "Disconnected");
       addLog(`dummy_status ${dummyCount}`);
       break;
+    case "dummy_list":
+      dummies = msg.dummies || [];
+      dummyCount = Number(msg.count || dummies.length || 0);
+      if (selectedDummyIndex !== null && selectedDummyIndex >= dummies.length) {
+        selectedDummyIndex = null;
+      }
+      updateSelectionUi();
+      setStatus(ws && ws.readyState === 1 ? "Connected" : "Disconnected");
+      addLog(`dummy_list ${dummyCount}`);
+      break;
     case "nv_snapshot":
       dummyCount = Number(msg.dummyCount || 0);
+      idMappings = {};
+      for (const mapping of msg.idMappings || []) idMappings[mapping.clientNo] = mapping;
+      dummies = msg.dummies || [];
+      if (selectedDummyIndex !== null && selectedDummyIndex >= dummies.length) {
+        selectedDummyIndex = null;
+      }
+      updateSelectionUi();
       setStatus(ws && ws.readyState === 1 ? "Connected" : "Disconnected");
       addLog(`snapshot dummy ${dummyCount}`);
       break;
@@ -464,10 +534,37 @@ function connect() {
   ws.onmessage = event => handleMessage(JSON.parse(event.data));
 }
 
+function openConsole() {
+  window.location.href = new URL("NetSyncWebClient.html", window.location.href).toString();
+}
+
 function updatePointer(event) {
   const rect = canvas.getBoundingClientRect();
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+}
+
+function getGroundPoint(event) {
+  updatePointer(event);
+  raycaster.setFromCamera(pointer, camera);
+  return raycaster.ray.intersectPlane(dragPlane, dragPoint)
+    ? dragPoint.clone()
+    : null;
+}
+
+function sendGroundTarget(point, additive = false) {
+  handleGroup.position.set(point.x, 0, point.z);
+  const payload = {
+    action: additive
+      ? (selectedDummyIndex != null ? "add_waypoint_one" : "add_waypoint")
+      : (selectedDummyIndex != null ? "move_one_to" : "move_dummies_to"),
+    x: point.x,
+    z: point.z,
+  };
+  if (selectedDummyIndex != null) payload.index = selectedDummyIndex;
+  if (!sendJson(payload)) return false;
+  addLog(`${additive ? "waypoint" : "move"} target ${point.x.toFixed(2)}, ${point.z.toFixed(2)}`);
+  return true;
 }
 
 canvas.addEventListener("pointerdown", event => {
@@ -502,6 +599,59 @@ canvas.addEventListener("pointerup", event => {
   sendHandleTarget(true);
 });
 
+canvas.addEventListener("click", event => {
+  if (dragActive) return;
+  updatePointer(event);
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(scene.children, true);
+  const hit = hits.find(entry => {
+    let current = entry.object;
+    while (current) {
+      if (current.userData?.clientNo != null) return true;
+      current = current.parent;
+    }
+    return false;
+  });
+  if (hit) {
+    let current = hit.object;
+    while (current && current.userData?.clientNo == null) current = current.parent;
+    const clientNo = current?.userData?.clientNo;
+    const dummyIndex = clientNo != null ? getDummyIndexByClientNo(clientNo) : null;
+    if (dummyIndex != null) {
+      setSelectedDummy(dummyIndex);
+      return;
+    }
+  }
+
+  const point = getGroundPoint(event);
+  if (!point) return;
+  sendGroundTarget(point, event.shiftKey);
+});
+
+canvas.addEventListener("dblclick", event => {
+  updatePointer(event);
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(scene.children, true);
+  const hit = hits.find(entry => {
+    let current = entry.object;
+    while (current) {
+      if (current.userData?.clientNo != null) return true;
+      current = current.parent;
+    }
+    return false;
+  });
+  if (!hit) return;
+  let current = hit.object;
+  while (current && current.userData?.clientNo == null) current = current.parent;
+  const clientNo = current?.userData?.clientNo;
+  const dummyIndex = clientNo != null ? getDummyIndexByClientNo(clientNo) : null;
+  if (dummyIndex == null) return;
+  if (!sendJson({ action: "despawn_one", index: dummyIndex })) return;
+  if (selectedDummyIndex === dummyIndex) selectedDummyIndex = null;
+  updateSelectionUi();
+  addLog("despawn one requested");
+});
+
 window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
@@ -510,9 +660,15 @@ window.addEventListener("resize", () => {
 
 document.getElementById("ws-url").value = defaultWsUrl();
 document.getElementById("connect-btn").addEventListener("click", connect);
+document.getElementById("open-console-btn").addEventListener("click", openConsole);
 document.getElementById("spawn-btn").addEventListener("click", () => spawnDummies());
 document.getElementById("spawn-50-btn").addEventListener("click", () => spawnDummies(50));
 document.getElementById("clear-btn").addEventListener("click", clearDummies);
+document.getElementById("remove-btn").addEventListener("click", removeSelectedDummy);
+document.getElementById("deselect-btn").addEventListener("click", () => {
+  selectedDummyIndex = null;
+  updateSelectionUi();
+});
 document.querySelectorAll(".mode-btn").forEach(button => {
   button.addEventListener("click", () => setMode(button.dataset.mode));
 });
@@ -530,6 +686,7 @@ function animate(timeMs) {
 }
 
 setStatus("Disconnected");
+updateSelectionUi();
 addLog("viewer ready");
 requestAnimationFrame(animate);
 </script>

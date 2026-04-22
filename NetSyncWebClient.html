@@ -76,7 +76,7 @@
   .dot.ok { background: #39c16c; }
   .url-tools {
     display: grid;
-    grid-template-columns: minmax(180px, 1fr) auto auto;
+    grid-template-columns: minmax(180px, 1fr) auto auto auto;
     gap: 8px;
   }
   .summary {
@@ -266,6 +266,13 @@
   .dummy-count strong {
     color: #ffd37a;
     font-size: 14px;
+  }
+  .dummy-selection {
+    color: #c7d2e0;
+    font-size: 12px;
+  }
+  .dummy-selection strong {
+    color: #ffffff;
   }
   #avatar-canvas {
     display: block;
@@ -464,6 +471,19 @@
       display: none;
     }
   }
+  @media (min-width: 981px) and (max-height: 900px) {
+    body { overflow: auto; }
+    .app {
+      height: auto;
+      min-height: 100dvh;
+      grid-template-rows: auto auto auto;
+    }
+    .main,
+    .panel,
+    .side {
+      overflow: visible;
+    }
+  }
 </style>
 </head>
 <body>
@@ -474,6 +494,7 @@
       <input type="text" id="ws-url" value="" aria-label="Bridge URL">
       <button class="primary" onclick="connect()">Connect</button>
       <button onclick="disconnect()">Disconnect</button>
+      <button type="button" onclick="openViewer3d()">3D View</button>
     </div>
     <select id="ws-url-candidates" aria-label="Saved URLs"></select>
     <div class="status"><span id="status-dot" class="dot"></span><span id="status-text">Disconnected</span></div>
@@ -511,13 +532,18 @@
             <input type="number" id="dummy-spawn-count" value="20" min="1" placeholder="Count">
             <input type="number" id="dummy-center-x" value="0" step="0.1" placeholder="Center X">
             <input type="number" id="dummy-center-z" value="0" step="0.1" placeholder="Center Z">
-            <input type="number" id="dummy-radius" value="3" min="0" step="0.1" placeholder="Radius">
+            <input type="number" id="dummy-radius" value="5" min="0" step="0.1" placeholder="Radius">
           </div>
           <div class="group">
-            <button type="button" onclick="spawnDummies()">Spawn</button>
+            <button type="button" id="spawn-btn" onclick="spawnDummies()">Spawn</button>
             <button type="button" onclick="spawnDummies(50)">+50</button>
             <button type="button" onclick="spawnDummies(100)">+100</button>
             <button type="button" onclick="despawnDummies()">Despawn All</button>
+          </div>
+          <div class="group">
+            <span class="dummy-selection" id="dummy-selection-label">Selected: <strong>(none)</strong></span>
+            <button type="button" id="dummy-remove-btn" onclick="removeSelectedDummy()" disabled>Remove</button>
+            <button type="button" id="dummy-deselect-btn" onclick="deselectDummy()" disabled>Deselect</button>
           </div>
         </div>
         <canvas id="avatar-canvas" width="1200" height="320"></canvas>
@@ -564,6 +590,10 @@ let dummyCount = 0;
 let canvasView = { centerX: 0, centerZ: 0, scale: 40 };
 let mapCommandMarkers = [];
 let mapRedrawFrame = 0;
+let dummies = [];
+let selectedDummyIndex = null;
+let spawnMode = false;
+let spawnPreviewWorld = null;
 
 const BRIDGE_URL_STORAGE_KEY = "styly-netsync-bridge-url";
 const BRIDGE_URL_HISTORY_KEY = "styly-netsync-bridge-url-history";
@@ -790,6 +820,10 @@ function disconnect() {
   if (ws) ws.close();
 }
 
+function openViewer3d() {
+  window.location.href = new URL("3d.html", window.location.href).toString();
+}
+
 function clearLiveState() {
   clients = {};
   idMappings = {};
@@ -803,6 +837,10 @@ function clearLiveState() {
   dummyCount = 0;
   canvasView = { centerX: 0, centerZ: 0, scale: 40 };
   mapCommandMarkers = [];
+  dummies = [];
+  selectedDummyIndex = null;
+  spawnMode = false;
+  spawnPreviewWorld = null;
   renderAll();
 }
 
@@ -878,6 +916,74 @@ function renderOverview() {
   document.getElementById("stat-var-count").textContent = summary.varCount;
   document.getElementById("map-caption").textContent = `pose ${summary.poseClientCount} / dummy ${dummyCount}`;
   document.getElementById("dummy-count").textContent = String(dummyCount);
+  updateDummySelectionUi();
+}
+
+function getDummyClientNo(dummyIndex) {
+  const dummy = dummies[dummyIndex];
+  if (!dummy) return null;
+  for (const [cno, mapping] of Object.entries(idMappings)) {
+    if (mapping.deviceId === dummy.deviceId) return Number(cno);
+  }
+  return null;
+}
+
+function getDummyIndexByClientNo(clientNo) {
+  const mapping = idMappings[String(clientNo)];
+  if (!mapping?.deviceId) return null;
+  const index = dummies.findIndex(dummy => dummy.deviceId === mapping.deviceId);
+  return index >= 0 ? index : null;
+}
+
+function getDummyWorldPos(dummyIndex) {
+  const clientNo = getDummyClientNo(dummyIndex);
+  const pose = clientNo != null ? clients[String(clientNo)] : null;
+  if (pose?.head?.pos) {
+    return { x: pose.head.pos.x, z: pose.head.pos.z };
+  }
+  const dummy = dummies[dummyIndex];
+  if (!dummy) return null;
+  return { x: dummy.x, z: dummy.z };
+}
+
+function findDummyAtWorldPos(wx, wz, threshold = 0.5) {
+  for (let i = dummies.length - 1; i >= 0; i -= 1) {
+    const pos = getDummyWorldPos(i);
+    if (!pos) continue;
+    if (Math.hypot(pos.x - wx, pos.z - wz) < threshold) return i;
+  }
+  return null;
+}
+
+function setSelectedDummy(index) {
+  selectedDummyIndex = selectedDummyIndex === index ? null : index;
+  updateDummySelectionUi();
+  scheduleMapRedraw();
+}
+
+function deselectDummy() {
+  if (selectedDummyIndex == null) return;
+  selectedDummyIndex = null;
+  updateDummySelectionUi();
+  scheduleMapRedraw();
+}
+
+function updateDummySelectionUi() {
+  const label = document.getElementById("dummy-selection-label");
+  const removeButton = document.getElementById("dummy-remove-btn");
+  const deselectButton = document.getElementById("dummy-deselect-btn");
+  const selectedText = selectedDummyIndex == null || !dummies[selectedDummyIndex]
+    ? "(none)"
+    : `Dummy #${selectedDummyIndex}`;
+  if (label) label.innerHTML = `Selected: <strong>${esc(selectedText)}</strong>`;
+  if (removeButton) removeButton.disabled = selectedDummyIndex == null;
+  if (deselectButton) deselectButton.disabled = selectedDummyIndex == null;
+  updateSpawnButtonUi();
+}
+
+function updateSpawnButtonUi() {
+  const button = document.getElementById("spawn-btn");
+  if (button) button.textContent = spawnMode ? "Click map to place..." : "Spawn";
 }
 
 function rowForClient(cno) {
@@ -1008,6 +1114,14 @@ function spawnDummies(countOverride = null) {
     toast("Dummy count required", true);
     return;
   }
+  if (countOverride == null) {
+    spawnMode = !spawnMode;
+    spawnPreviewWorld = null;
+    updateSpawnButtonUi();
+    scheduleMapRedraw();
+    toast(spawnMode ? "Click map to place dummies" : "Spawn canceled");
+    return;
+  }
   ws.send(JSON.stringify({
     action: "spawn_dummies",
     count,
@@ -1024,7 +1138,24 @@ function despawnDummies() {
     return;
   }
   ws.send(JSON.stringify({ action: "despawn_dummies" }));
+  deselectDummy();
   toast("Despawn requested");
+}
+
+function removeSelectedDummy() {
+  if (!isConnected()) {
+    toast("Not connected", true);
+    return;
+  }
+  if (selectedDummyIndex == null) {
+    toast("No dummy selected", true);
+    return;
+  }
+  ws.send(JSON.stringify({ action: "despawn_one", index: selectedDummyIndex }));
+  selectedDummyIndex = null;
+  updateDummySelectionUi();
+  scheduleMapRedraw();
+  toast("Dummy remove requested");
 }
 
 function chooseNiceStep(value) {
@@ -1076,6 +1207,14 @@ function findMapHitTarget(x, y) {
 
 function initializeMapUi() {
   const canvas = document.getElementById("avatar-canvas");
+  canvas.addEventListener("mousemove", event => {
+    if (!spawnMode) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = (event.clientX - rect.left) * (canvas.width / rect.width);
+    const y = (event.clientY - rect.top) * (canvas.height / rect.height);
+    spawnPreviewWorld = canvasToWorld(x, y, canvas.width, canvas.height);
+    scheduleMapRedraw();
+  });
   canvas.addEventListener("pointerdown", event => {
     const rect = canvas.getBoundingClientRect();
     const x = (event.clientX - rect.left) * (canvas.width / rect.width);
@@ -1083,15 +1222,66 @@ function initializeMapUi() {
     const hit = findMapHitTarget(x, y);
     if (hit) {
       event.preventDefault();
-      selectClient(hit.cno, { scrollIntoList: true });
+      const dummyIndex = getDummyIndexByClientNo(hit.cno);
+      if (dummyIndex != null) {
+        setSelectedDummy(dummyIndex);
+      } else {
+        selectClient(hit.cno, { scrollIntoList: true });
+      }
       return;
     }
-    if (!dummyCount || !isConnected()) return;
+    if (!isConnected()) return;
 
     const world = canvasToWorld(x, y, canvas.width, canvas.height);
-    const action = event.shiftKey ? "add_waypoint" : "move_dummies_to";
-    ws.send(JSON.stringify({ action, x: world.x, z: world.z }));
+    if (spawnMode) {
+      const count = Number(document.getElementById("dummy-spawn-count")?.value || 0);
+      if (!(count > 0)) {
+        toast("Dummy count required", true);
+        return;
+      }
+      ws.send(JSON.stringify({
+        action: "spawn_dummies",
+        count,
+        centerX: world.x,
+        centerZ: world.z,
+        radius: 1.5,
+      }));
+      spawnMode = false;
+      spawnPreviewWorld = null;
+      updateSpawnButtonUi();
+      addMapCommandMarker(world.x, world.z);
+      toast(`Spawn requested: ${count}`);
+      event.preventDefault();
+      return;
+    }
+    if (!dummyCount) return;
+    const dummyIndex = findDummyAtWorldPos(world.x, world.z);
+    if (dummyIndex != null) {
+      setSelectedDummy(dummyIndex);
+      event.preventDefault();
+      return;
+    }
+    const action = event.shiftKey
+      ? (selectedDummyIndex != null ? "add_waypoint_one" : "add_waypoint")
+      : (selectedDummyIndex != null ? "move_one_to" : "move_dummies_to");
+    const payload = { action, x: world.x, z: world.z };
+    if (selectedDummyIndex != null) payload.index = selectedDummyIndex;
+    ws.send(JSON.stringify(payload));
     addMapCommandMarker(world.x, world.z);
+    event.preventDefault();
+  });
+  canvas.addEventListener("dblclick", event => {
+    if (!isConnected()) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = (event.clientX - rect.left) * (canvas.width / rect.width);
+    const y = (event.clientY - rect.top) * (canvas.height / rect.height);
+    const world = canvasToWorld(x, y, canvas.width, canvas.height);
+    const dummyIndex = findDummyAtWorldPos(world.x, world.z);
+    if (dummyIndex == null) return;
+    ws.send(JSON.stringify({ action: "despawn_one", index: dummyIndex }));
+    if (selectedDummyIndex === dummyIndex) selectedDummyIndex = null;
+    updateDummySelectionUi();
+    scheduleMapRedraw();
     event.preventDefault();
   });
 }
@@ -1353,11 +1543,23 @@ function handleMessage(msg) {
       for (const m of msg.idMappings || []) idMappings[m.clientNo] = m;
       roomSummary = { ...roomSummary, ...(msg.roomSummary || {}) };
       dummyCount = Number(msg.dummyCount || 0);
+      dummies = msg.dummies || [];
+      if (selectedDummyIndex !== null && selectedDummyIndex >= dummies.length) {
+        selectedDummyIndex = null;
+      }
       pruneDisconnectedClientState();
       renderAll();
       break;
     case "dummy_status":
       dummyCount = Number(msg.count || 0);
+      renderAll();
+      break;
+    case "dummy_list":
+      dummies = msg.dummies || [];
+      dummyCount = Number(msg.count || dummies.length || 0);
+      if (selectedDummyIndex !== null && selectedDummyIndex >= dummies.length) {
+        selectedDummyIndex = null;
+      }
       renderAll();
       break;
     case "rpc":
@@ -1477,7 +1679,27 @@ function collectMapBoundsPoints() {
       points.push({ x: head.x + pose.left.relPos.x, z: head.z + pose.left.relPos.z });
     }
   }
+  for (const dummy of dummies) {
+    points.push({ x: dummy.x, z: dummy.z });
+  }
+  if (spawnMode && spawnPreviewWorld) {
+    points.push({ x: spawnPreviewWorld.x - 1.5, z: spawnPreviewWorld.z - 1.5 });
+    points.push({ x: spawnPreviewWorld.x + 1.5, z: spawnPreviewWorld.z + 1.5 });
+  }
   return points;
+}
+
+function drawSpawnPreview(ctx, width, height) {
+  if (!spawnMode || !spawnPreviewWorld) return;
+  const point = worldToCanvas(spawnPreviewWorld.x, spawnPreviewWorld.z, width, height);
+  const radiusPx = 1.5 * canvasView.scale;
+  ctx.fillStyle = "rgba(143, 183, 255, 0.12)";
+  ctx.strokeStyle = "rgba(143, 183, 255, 0.45)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, radiusPx, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
 }
 
 function drawGrid(ctx, width, height, pixelStep = null) {
@@ -1634,16 +1856,19 @@ function drawAvatars() {
   drawScaleBar(ctx, width, height);
 
   const drawEntries = [...poseEntries].sort(([a], [b]) => {
-    if (String(a) === String(selectedClientNo)) return 1;
-    if (String(b) === String(selectedClientNo)) return -1;
+    const selectedDummyClientNo = selectedDummyIndex != null ? getDummyClientNo(selectedDummyIndex) : null;
+    if (String(a) === String(selectedClientNo) || Number(a) === selectedDummyClientNo) return 1;
+    if (String(b) === String(selectedClientNo) || Number(b) === selectedDummyClientNo) return -1;
     return Number(a) - Number(b);
   });
 
   for (const [cno, pose] of drawEntries) {
+    const selectedDummyClientNo = selectedDummyIndex != null ? getDummyClientNo(selectedDummyIndex) : null;
     const selected = String(cno) === String(selectedClientNo);
+    const selectedDummy = Number(cno) === selectedDummyClientNo;
     const headPoint = worldToCanvas(pose.head.pos.x, pose.head.pos.z, width, height);
     const color = `hsl(${(Number(cno) * 47) % 360} 80% 62%)`;
-    mapHitTargets.push({ cno, x: headPoint.x, y: headPoint.y, radius: selected ? 24 : 18 });
+    mapHitTargets.push({ cno, x: headPoint.x, y: headPoint.y, radius: selected || selectedDummy ? 24 : 18 });
 
     for (const handKey of ["right", "left"]) {
       const hand = pose[handKey]?.relPos;
@@ -1679,12 +1904,25 @@ function drawAvatars() {
       ctx.stroke();
     }
 
+    if (selectedDummy) {
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(headPoint.x, headPoint.y, 20, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
+      ctx.lineWidth = 8;
+      ctx.beginPath();
+      ctx.arc(headPoint.x, headPoint.y, 28, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
     ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.arc(headPoint.x, headPoint.y, selected ? 8 : 6, 0, Math.PI * 2);
+    ctx.arc(headPoint.x, headPoint.y, selected || selectedDummy ? 8 : 6, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = selected ? "#fff3bd" : "#0c1017";
-    ctx.lineWidth = selected ? 2 : 1;
+    ctx.strokeStyle = selectedDummy ? "#ffffff" : selected ? "#fff3bd" : "#0c1017";
+    ctx.lineWidth = selected || selectedDummy ? 2 : 1;
     ctx.stroke();
     ctx.fillStyle = "#e8edf2";
     ctx.font = "11px sans-serif";
@@ -1692,6 +1930,7 @@ function drawAvatars() {
     ctx.fillText(`#${cno}`, headPoint.x + 9, headPoint.y + 4);
   }
 
+  drawSpawnPreview(ctx, width, height);
   drawMapCommandFeedback(ctx, width, height);
 }
 
@@ -1702,6 +1941,7 @@ initializeParticipantGridUi();
 initializeMapUi();
 initializeEditGuards();
 initializeVariableActions();
+updateSpawnButtonUi();
 renderAll();
 </script>
 </body>
