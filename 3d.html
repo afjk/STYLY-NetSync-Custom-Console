@@ -142,7 +142,7 @@ controls.minDistance = 3;
 controls.maxDistance = 60;
 controls.target.set(0, 1.2, 0);
 
-scene.add(new THREE.AmbientLight(0x404060, 0.6));
+scene.add(new THREE.AmbientLight(0x8f98ab, 1.05));
 
 const sun = new THREE.DirectionalLight(0xffffff, 1.2);
 sun.position.set(8, 15, 10);
@@ -154,7 +154,44 @@ sun.shadow.camera.top = 25;
 sun.shadow.camera.bottom = -25;
 scene.add(sun);
 
-scene.add(new THREE.GridHelper(50, 50, 0x34445e, 0x202a38));
+const gridHelper = new THREE.GridHelper(50, 50, 0x4c5f80, 0x273244);
+gridHelper.position.y = 0.001;
+scene.add(gridHelper);
+
+function createAxisLine(points, color) {
+  const geometry = new THREE.BufferGeometry().setFromPoints(points);
+  return new THREE.Line(
+    geometry,
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.95 })
+  );
+}
+
+const axisGroup = new THREE.Group();
+axisGroup.add(createAxisLine(
+  [new THREE.Vector3(-25, 0.02, 0), new THREE.Vector3(25, 0.02, 0)],
+  0xff6b6b
+));
+axisGroup.add(createAxisLine(
+  [new THREE.Vector3(0, 0.02, -25), new THREE.Vector3(0, 0.02, 25)],
+  0x61b3ff
+));
+
+const originMarker = new THREE.Mesh(
+  new THREE.SphereGeometry(0.12, 20, 16),
+  new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x9aa3ad, emissiveIntensity: 0.45 })
+);
+originMarker.position.set(0, 0.12, 0);
+axisGroup.add(originMarker);
+
+const originRing = new THREE.Mesh(
+  new THREE.RingGeometry(0.22, 0.32, 40),
+  new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.65, side: THREE.DoubleSide })
+);
+originRing.rotation.x = -Math.PI / 2;
+originRing.position.y = 0.01;
+axisGroup.add(originRing);
+
+scene.add(axisGroup);
 
 const ground = new THREE.Mesh(
   new THREE.PlaneGeometry(80, 80),
@@ -198,6 +235,14 @@ let idMappings = {};
 let dummies = [];
 let selectedDummyIndex = null;
 
+function unityToViewPosition(x, y, z) {
+  return { x, y, z: -z };
+}
+
+function viewToUnityPosition(x, y, z) {
+  return { x, y, z: -z };
+}
+
 function defaultWsUrl() {
   if (location.hostname && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
     return `ws://${location.hostname}:8765`;
@@ -236,7 +281,7 @@ function spawnDummies(countOverride = null) {
     action: "spawn_dummies",
     count: countValue,
     centerX: handleGroup.position.x,
-    centerZ: handleGroup.position.z,
+    centerZ: viewToUnityPosition(0, 0, handleGroup.position.z).z,
     radius
   })) {
     addLog("spawn ignored: websocket disconnected");
@@ -256,17 +301,18 @@ function clearDummies() {
 }
 
 function sendHandleTarget(final = false) {
+  const unityTarget = viewToUnityPosition(handleGroup.position.x, 0, handleGroup.position.z);
   const payload = {
     action: selectedDummyIndex != null ? "move_one_to" : "move_dummies_to",
-    x: handleGroup.position.x,
-    z: handleGroup.position.z
+    x: unityTarget.x,
+    z: unityTarget.z
   };
   if (selectedDummyIndex != null) payload.index = selectedDummyIndex;
   if (!sendJson(payload)) {
     return;
   }
   if (final) {
-    addLog(`move target ${handleGroup.position.x.toFixed(2)}, ${handleGroup.position.z.toFixed(2)}`);
+    addLog(`move target ${unityTarget.x.toFixed(2)}, ${unityTarget.z.toFixed(2)}`);
   }
 }
 
@@ -306,8 +352,8 @@ function createAvatarGroup(clientNo) {
 
   const virtualAnchor = new THREE.Group();
   const physicalAnchor = new THREE.Group();
-  const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0x4f92ff, roughness: 0.45, metalness: 0.05 });
-  const handMaterial = new THREE.MeshStandardMaterial({ color: 0x8bb7ff, roughness: 0.45 });
+  const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0xd6dbe3, roughness: 0.42, metalness: 0.03 });
+  const handMaterial = new THREE.MeshStandardMaterial({ color: 0xf0f3f7, roughness: 0.36 });
   const physicalMaterial = new THREE.MeshStandardMaterial({ color: 0xb9c6d8, transparent: true, opacity: 0.25 });
 
   const virtualBody = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 0.9, 16), bodyMaterial);
@@ -388,14 +434,16 @@ function updateAvatar(client) {
   const right = client.right?.relPos || { x: 0.28, y: -0.34, z: 0.2 };
   const left = client.left?.relPos || { x: -0.28, y: -0.34, z: 0.2 };
   const physical = client.physical?.pos || head;
+  const headView = unityToViewPosition(head.x, head.y, head.z);
+  const physicalView = unityToViewPosition(physical.x, physical.y, physical.z);
 
-  group.userData.virtualAnchor.position.set(head.x, head.y, head.z);
-  group.userData.rightHand.position.set(right.x, right.y, right.z);
-  group.userData.leftHand.position.set(left.x, left.y, left.z);
+  group.userData.virtualAnchor.position.set(headView.x, headView.y, headView.z);
+  group.userData.rightHand.position.set(right.x, right.y, -right.z);
+  group.userData.leftHand.position.set(left.x, left.y, -left.z);
 
-  group.userData.physicalAnchor.position.set(physical.x, physical.y, physical.z);
-  group.userData.label.position.set(head.x, head.y + 0.7, head.z);
-  group.userData.selectionRing.position.set(physical.x, Math.max(0.02, physical.y - 1.02), physical.z);
+  group.userData.physicalAnchor.position.set(physicalView.x, physicalView.y, physicalView.z);
+  group.userData.label.position.set(headView.x, headView.y + 0.7, headView.z);
+  group.userData.selectionRing.position.set(physicalView.x, Math.max(0.02, physicalView.y - 1.02), physicalView.z);
 }
 
 function removeAvatar(clientNo) {
@@ -554,16 +602,17 @@ function getGroundPoint(event) {
 
 function sendGroundTarget(point, additive = false) {
   handleGroup.position.set(point.x, 0, point.z);
+  const unityTarget = viewToUnityPosition(point.x, 0, point.z);
   const payload = {
     action: additive
       ? (selectedDummyIndex != null ? "add_waypoint_one" : "add_waypoint")
       : (selectedDummyIndex != null ? "move_one_to" : "move_dummies_to"),
-    x: point.x,
-    z: point.z,
+    x: unityTarget.x,
+    z: unityTarget.z,
   };
   if (selectedDummyIndex != null) payload.index = selectedDummyIndex;
   if (!sendJson(payload)) return false;
-  addLog(`${additive ? "waypoint" : "move"} target ${point.x.toFixed(2)}, ${point.z.toFixed(2)}`);
+  addLog(`${additive ? "waypoint" : "move"} target ${unityTarget.x.toFixed(2)}, ${unityTarget.z.toFixed(2)}`);
   return true;
 }
 
