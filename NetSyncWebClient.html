@@ -110,7 +110,7 @@
     min-height: 0;
     border-right: 1px solid #252b35;
     display: grid;
-    grid-template-rows: auto minmax(180px, 1fr) 360px;
+    grid-template-rows: auto minmax(420px, 420px) minmax(560px, 1fr);
     overflow: hidden;
   }
   .side {
@@ -240,6 +240,8 @@
     border-top: 1px solid #252b35;
     background: #0c1017;
     overflow: hidden;
+    display: grid;
+    grid-template-rows: auto auto 1fr;
   }
   .map-tools {
     display: flex;
@@ -276,10 +278,11 @@
   }
   #avatar-canvas {
     display: block;
-    width: 100%;
+    width: min(100%, calc(100vh - 280px));
     height: auto;
-    aspect-ratio: 1200 / 320;
+    aspect-ratio: 1 / 1;
     cursor: pointer;
+    margin: 0 auto;
   }
   .detail-empty {
     color: #687386;
@@ -410,6 +413,9 @@
     .main { grid-template-columns: 1fr; }
     .panel { border-right: 0; }
     .side { min-height: 420px; border-top: 1px solid #252b35; }
+    #avatar-canvas {
+      width: 100%;
+    }
   }
   @media (max-width: 620px), (max-width: 980px) and (max-height: 520px) {
     body { overflow: auto; }
@@ -456,6 +462,10 @@
     }
     .map-wrap {
       overflow-x: auto;
+      display: block;
+    }
+    #avatar-canvas {
+      width: 100%;
     }
     .kv {
       grid-template-columns: 1fr;
@@ -546,7 +556,7 @@
             <button type="button" id="dummy-deselect-btn" onclick="deselectDummy()" disabled>Deselect</button>
           </div>
         </div>
-        <canvas id="avatar-canvas" width="1200" height="320"></canvas>
+        <canvas id="avatar-canvas" width="1000" height="1000"></canvas>
       </div>
     </section>
 
