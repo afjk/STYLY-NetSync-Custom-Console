@@ -1,9 +1,10 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # dependencies = [
 #   "pyzmq",
 #   "websockets",
+#   "styly-netsync-server>=0.10.3",
 # ]
 # ///
 #
@@ -19,7 +20,6 @@ import math
 from pathlib import Path
 import random
 import socket
-import struct
 import threading
 import time
 import uuid
@@ -39,34 +39,44 @@ except ModuleNotFoundError:
     websockets = None
     MISSING_RUNTIME_DEPENDENCIES.append("websockets")
 
-# --- NetSync Protocol Constants ---
-PROTOCOL_VERSION = 3
-MSG_CLIENT_POSE = 11
-MSG_ROOM_POSE = 12
-MSG_RPC = 3
-MSG_DEVICE_ID_MAPPING = 6
-MSG_GLOBAL_VAR_SET = 7
-MSG_GLOBAL_VAR_SYNC = 8
-MSG_CLIENT_VAR_SET = 9
-MSG_CLIENT_VAR_SYNC = 10
+try:
+    from styly_netsync.adapters import client_transform_to_wire, create_stealth_transform
+    from styly_netsync.binary_serializer import (
+        MSG_CLIENT_VAR_SYNC,
+        MSG_DEVICE_ID_MAPPING,
+        MSG_GLOBAL_VAR_SYNC,
+        MSG_ROOM_POSE,
+        MSG_RPC,
+        deserialize,
+        serialize_client_transform,
+        serialize_client_var_set,
+        serialize_global_var_set,
+        serialize_rpc_message,
+    )
+    from styly_netsync.types import client_transform_data, transform_data
+except ModuleNotFoundError:
+    client_transform_to_wire = None
+    create_stealth_transform = None
+    deserialize = None
+    serialize_client_transform = None
+    serialize_client_var_set = None
+    serialize_global_var_set = None
+    serialize_rpc_message = None
+    client_transform_data = None
+    transform_data = None
+    MISSING_RUNTIME_DEPENDENCIES.append("styly-netsync-server")
 
-POSE_FLAG_STEALTH = 1 << 0
 POSE_FLAG_PHYSICAL_VALID = 1 << 1
 POSE_FLAG_HEAD_VALID = 1 << 2
 POSE_FLAG_RIGHT_VALID = 1 << 3
 POSE_FLAG_LEFT_VALID = 1 << 4
 POSE_FLAG_VIRTUALS_VALID = 1 << 5
-ENCODING_FLAGS_DEFAULT = 0x1F
 DISCOVERY_REQUEST = "STYLY-NETSYNC-DISCOVER"
 DISCOVERY_RESPONSE_PREFIX = "STYLY-NETSYNC"
 DEFAULT_SERVER_DISCOVERY_PORT = 9999
 DEFAULT_HTTP_PORT = 8080
 WEB_CLIENT_FILENAME = "NetSyncWebClient.html"
 DUMMY_SEND_INTERVAL_SEC = 0.1
-DUMMY_HEAD_POS_SCALE = 0.01
-DUMMY_REL_POS_SCALE = 0.005
-DUMMY_PHYSICAL_DELTA_SCALE = 0.01
-DUMMY_YAW_SCALE = 0.1
 
 
 def ensure_runtime_dependencies():
@@ -80,329 +90,223 @@ def ensure_runtime_dependencies():
     )
     raise SystemExit(1)
 
-# --- Binary Protocol Helpers ---
-
-def pack_string(buf: bytearray, s: str, use_ushort=False):
-    b = s.encode("utf-8")
-    if use_ushort:
-        buf.extend(struct.pack("<H", len(b)))
-    else:
-        buf.append(len(b))
-    buf.extend(b)
-
-def unpack_string(data: bytes, offset: int, use_ushort=False):
-    if use_ushort:
-        length = struct.unpack("<H", data[offset:offset+2])[0]
-        offset += 2
-    else:
-        length = data[offset]
-        offset += 1
-    s = data[offset:offset+length].decode("utf-8")
-    return s, offset + length
-
-def serialize_stealth_handshake(device_id: str) -> bytes:
-    buf = bytearray()
-    buf.append(MSG_CLIENT_POSE)
-    buf.append(PROTOCOL_VERSION)
-    pack_string(buf, device_id)
-    buf.extend(struct.pack("<H", 0))
-    buf.append(POSE_FLAG_STEALTH)
-    buf.append(ENCODING_FLAGS_DEFAULT)
-    buf.append(0)
-    return bytes(buf)
+def _adapt_position(raw: dict | None) -> dict[str, float]:
+    raw = raw or {}
+    return {
+        "x": float(raw.get("posX", 0.0)),
+        "y": float(raw.get("posY", 0.0)),
+        "z": float(raw.get("posZ", 0.0)),
+    }
 
 
-def euler_to_quat(yaw_rad: float) -> tuple[float, float, float, float]:
-    half = yaw_rad * 0.5
-    return 0.0, math.sin(half), 0.0, math.cos(half)
+def _adapt_relative_transform(head: dict | None, raw: dict | None) -> dict | None:
+    if not head or not raw:
+        return None
+
+    return {
+        "relPos": {
+            "x": float(raw.get("posX", 0.0)) - float(head.get("posX", 0.0)),
+            "y": float(raw.get("posY", 0.0)) - float(head.get("posY", 0.0)),
+            "z": float(raw.get("posZ", 0.0)) - float(head.get("posZ", 0.0)),
+        },
+        "rotPacked": 0,
+    }
 
 
-def quantize_s16(value: float, scale: float) -> int:
-    quantized = int(round(value / scale))
-    return max(-(1 << 15), min((1 << 15) - 1, quantized))
-
-
-def quantize_s24(value: float, scale: float) -> int:
-    quantized = int(round(value / scale))
-    return max(-(1 << 23), min((1 << 23) - 1, quantized))
-
-
-def pack_int24_le(buf: bytearray, value: int) -> None:
-    raw = value & 0xFFFFFF
-    buf.extend((raw & 0xFF, (raw >> 8) & 0xFF, (raw >> 16) & 0xFF))
-
-
-def compress_quat_smallest_three(qx: float, qy: float, qz: float, qw: float) -> int:
-    components = [qx, qy, qz, qw]
-    largest_index = max(range(4), key=lambda index: abs(components[index]))
-    if components[largest_index] < 0.0:
-        components = [-value for value in components]
-
-    max_component = 1.0 / math.sqrt(2.0)
-    packed = largest_index << 30
-    remaining = [components[index] for index in range(4) if index != largest_index]
-    for shift, value in zip((20, 10, 0), remaining):
-        clamped = max(-max_component, min(max_component, value))
-        normalized = (clamped + max_component) / (2.0 * max_component)
-        packed |= int(round(normalized * 1023.0)) << shift
-    return packed
-
-
-def serialize_avatar_transform(device_id: str,
-                               head_pos: tuple[float, float, float],
-                               head_yaw_rad: float,
-                               right_rel: tuple[float, float, float],
-                               left_rel: tuple[float, float, float],
-                               physical_pos: tuple[float, float, float] | None,
-                               virtuals: list[tuple[float, float, float]] | None,
-                               pose_seq: int) -> bytes:
-    flags = POSE_FLAG_HEAD_VALID | POSE_FLAG_RIGHT_VALID | POSE_FLAG_LEFT_VALID
-    virtual_positions = list(virtuals or [])
-    if physical_pos is not None:
-        flags |= POSE_FLAG_PHYSICAL_VALID
-    if virtual_positions:
-        flags |= POSE_FLAG_VIRTUALS_VALID
-
-    buf = bytearray()
-    buf.append(MSG_CLIENT_POSE)
-    buf.append(PROTOCOL_VERSION)
-    pack_string(buf, device_id)
-    buf.extend(struct.pack("<H", pose_seq & 0xFFFF))
-    buf.append(flags)
-    buf.append(ENCODING_FLAGS_DEFAULT)
-
-    identity_rot = compress_quat_smallest_three(0.0, 0.0, 0.0, 1.0)
-    if physical_pos is not None:
-        delta_x = head_pos[0] - physical_pos[0]
-        delta_z = head_pos[2] - physical_pos[2]
-        buf.extend(struct.pack(
-            "<hhh",
-            quantize_s16(delta_x, DUMMY_PHYSICAL_DELTA_SCALE),
-            quantize_s16(delta_z, DUMMY_PHYSICAL_DELTA_SCALE),
-            quantize_s16(0.0, DUMMY_YAW_SCALE),
-        ))
-
-    for axis in head_pos:
-        pack_int24_le(buf, quantize_s24(axis, DUMMY_HEAD_POS_SCALE))
-    buf.extend(struct.pack("<I", compress_quat_smallest_three(*euler_to_quat(head_yaw_rad))))
-
-    for rel_pos in (right_rel, left_rel):
-        buf.extend(struct.pack(
-            "<hhhI",
-            quantize_s16(rel_pos[0], DUMMY_REL_POS_SCALE),
-            quantize_s16(rel_pos[1], DUMMY_REL_POS_SCALE),
-            quantize_s16(rel_pos[2], DUMMY_REL_POS_SCALE),
-            identity_rot,
-        ))
-
-    buf.append(len(virtual_positions))
-    for virtual_pos in virtual_positions:
-        rel_x = virtual_pos[0] - head_pos[0]
-        rel_y = virtual_pos[1] - head_pos[1]
-        rel_z = virtual_pos[2] - head_pos[2]
-        buf.extend(struct.pack(
-            "<hhhI",
-            quantize_s16(rel_x, DUMMY_REL_POS_SCALE),
-            quantize_s16(rel_y, DUMMY_REL_POS_SCALE),
-            quantize_s16(rel_z, DUMMY_REL_POS_SCALE),
-            identity_rot,
-        ))
-
-    return bytes(buf)
-
-def serialize_rpc(function_name: str, args: list[str],
-                  sender_client_no: int = 0,
-                  target_client_nos: list[int] = None) -> bytes:
-    buf = bytearray()
-    buf.append(MSG_RPC)
-    buf.extend(struct.pack("<H", sender_client_no))
-    targets = target_client_nos or []
-    buf.append(len(targets))
-    for t in targets:
-        buf.extend(struct.pack("<H", t))
-    pack_string(buf, function_name)
-    args_json = json.dumps(args)
-    pack_string(buf, args_json, use_ushort=True)
-    return bytes(buf)
-
-def serialize_global_var_set(sender_client_no: int, name: str, value: str) -> bytes:
-    buf = bytearray()
-    buf.append(MSG_GLOBAL_VAR_SET)
-    buf.extend(struct.pack("<H", sender_client_no))
-    pack_string(buf, name[:64])
-    pack_string(buf, value[:1024], use_ushort=True)
-    buf.extend(struct.pack("<d", time.time()))
-    return bytes(buf)
-
-def serialize_client_var_set(sender_client_no: int, target_client_no: int,
-                             name: str, value: str) -> bytes:
-    buf = bytearray()
-    buf.append(MSG_CLIENT_VAR_SET)
-    buf.extend(struct.pack("<H", sender_client_no))
-    buf.extend(struct.pack("<H", target_client_no))
-    pack_string(buf, name[:64])
-    pack_string(buf, value[:1024], use_ushort=True)
-    buf.extend(struct.pack("<d", time.time()))
-    return bytes(buf)
-
-# --- Deserialization ---
-
-def unpack_int24_le(data: bytes, offset: int):
-    raw = data[offset] | (data[offset+1] << 8) | (data[offset+2] << 16)
-    offset += 3
-    if raw & 0x800000:
-        raw -= 1 << 24
-    return raw, offset
-
-def deserialize_room_pose(data: bytes) -> dict:
-    offset = 0
-    msg_type = data[offset]; offset += 1
-    proto = data[offset]; offset += 1
-    room_id, offset = unpack_string(data, offset)
-    broadcast_time = struct.unpack("<d", data[offset:offset+8])[0]; offset += 8
-    client_count = struct.unpack("<H", data[offset:offset+2])[0]; offset += 2
-
+def _adapt_room_pose(raw: dict) -> dict:
     clients = []
-    for _ in range(client_count):
-        client_no = struct.unpack("<H", data[offset:offset+2])[0]; offset += 2
-        pose_time = struct.unpack("<d", data[offset:offset+8])[0]; offset += 8
-        pose_seq = struct.unpack("<H", data[offset:offset+2])[0]; offset += 2
-        flags = data[offset]; offset += 1
-        enc_flags = data[offset]; offset += 1
+    for client in raw.get("clients", []):
+        adapted = {
+            "clientNo": client.get("clientNo"),
+            "poseTime": client.get("poseTime"),
+            "poseSeq": client.get("poseSeq"),
+            "flags": client.get("flags", 0),
+        }
+        head = client.get("head")
+        if head:
+            adapted["head"] = {
+                "pos": _adapt_position(head),
+                "rotPacked": 0,
+            }
 
-        client = {"clientNo": client_no, "poseTime": pose_time, "flags": flags}
+        physical = client.get("physical")
+        if physical:
+            adapted["physical"] = {"pos": _adapt_position(physical)}
 
-        phys_valid = bool(flags & (1 << 1))
-        head_valid = bool(flags & (1 << 2))
-        right_valid = head_valid and bool(flags & (1 << 3))
-        left_valid = head_valid and bool(flags & (1 << 4))
-        virt_valid = head_valid and bool(flags & (1 << 5))
+        right = _adapt_relative_transform(head, client.get("rightHand"))
+        if right:
+            adapted["right"] = right
 
-        if phys_valid:
-            dx, dz, dyaw = struct.unpack("<hhh", data[offset:offset+6]); offset += 6
-            client["xrOriginDelta"] = {"x": dx*0.01, "z": dz*0.01, "yaw": dyaw*0.1}
+        left = _adapt_relative_transform(head, client.get("leftHand"))
+        if left:
+            adapted["left"] = left
 
-        if head_valid:
-            hx, offset = unpack_int24_le(data, offset)
-            hy, offset = unpack_int24_le(data, offset)
-            hz, offset = unpack_int24_le(data, offset)
-            head_rot_packed = struct.unpack("<I", data[offset:offset+4])[0]; offset += 4
-            client["head"] = {"pos": {"x": hx*0.01, "y": hy*0.01, "z": hz*0.01}, "rotPacked": head_rot_packed}
+        virtuals = client.get("virtuals") or []
+        if head and virtuals:
+            adapted["virtuals"] = [
+                _adapt_relative_transform(head, virtual)
+                for virtual in virtuals
+                if virtual is not None
+            ]
 
-        if right_valid:
-            rx, ry, rz = struct.unpack("<hhh", data[offset:offset+6]); offset += 6
-            rrot = struct.unpack("<I", data[offset:offset+4])[0]; offset += 4
-            client["right"] = {"relPos": {"x": rx*0.005, "y": ry*0.005, "z": rz*0.005}, "rotPacked": rrot}
+        xr_origin_delta = {}
+        for src, dst in (
+            ("xrOriginDeltaX", "x"),
+            ("xrOriginDeltaZ", "z"),
+            ("xrOriginDeltaYaw", "yaw"),
+        ):
+            if src in client:
+                xr_origin_delta[dst] = client.get(src, 0.0)
+        if xr_origin_delta:
+            adapted["xrOriginDelta"] = xr_origin_delta
 
-        if left_valid:
-            lx, ly, lz = struct.unpack("<hhh", data[offset:offset+6]); offset += 6
-            lrot = struct.unpack("<I", data[offset:offset+4])[0]; offset += 4
-            client["left"] = {"relPos": {"x": lx*0.005, "y": ly*0.005, "z": lz*0.005}, "rotPacked": lrot}
+        clients.append(adapted)
 
-        v_count = data[offset]; offset += 1
-        if virt_valid and v_count > 0:
-            virtuals = []
-            for _ in range(v_count):
-                vx, vy, vz = struct.unpack("<hhh", data[offset:offset+6]); offset += 6
-                vrot = struct.unpack("<I", data[offset:offset+4])[0]; offset += 4
-                virtuals.append({"relPos": {"x": vx*0.005, "y": vy*0.005, "z": vz*0.005}, "rotPacked": vrot})
-            client["virtuals"] = virtuals
-        else:
-            for _ in range(v_count):
-                offset += 10
+    return {
+        "type": "room_pose",
+        "roomId": raw.get("roomId", ""),
+        "broadcastTime": raw.get("broadcastTime", 0.0),
+        "clients": clients,
+    }
 
-        if phys_valid and head_valid:
-            delta = client.get("xrOriginDelta", {})
-            d_x = delta.get("x", 0.0)
-            d_z = delta.get("z", 0.0)
-            d_yaw = delta.get("yaw", 0.0)
-            hp = client["head"]["pos"]
-            yaw_rad = math.radians(-d_yaw)
-            tx = hp["x"] - d_x
-            tz = hp["z"] - d_z
-            cos_y = math.cos(yaw_rad)
-            sin_y = math.sin(yaw_rad)
-            px = cos_y * tx + sin_y * tz
-            pz = -sin_y * tx + cos_y * tz
-            client["physical"] = {"pos": {"x": px, "y": hp["y"], "z": pz}}
 
-        clients.append(client)
+def _adapt_rpc(raw: dict) -> dict:
+    arguments_json = raw.get("argumentsJson", "[]")
+    try:
+        args = json.loads(arguments_json) if arguments_json else []
+    except (TypeError, json.JSONDecodeError):
+        args = []
+    return {
+        "type": "rpc",
+        "senderClientNo": raw.get("senderClientNo", 0),
+        "targetClientNos": raw.get("targetClientNos", []),
+        "functionName": raw.get("functionName", ""),
+        "args": args,
+    }
 
-    return {"type": "room_pose", "roomId": room_id, "broadcastTime": broadcast_time, "clients": clients}
 
-def deserialize_rpc(data: bytes) -> dict:
-    offset = 1
-    sender = struct.unpack("<H", data[offset:offset+2])[0]; offset += 2
-    target_count = data[offset]; offset += 1
-    targets = []
-    for _ in range(target_count):
-        targets.append(struct.unpack("<H", data[offset:offset+2])[0]); offset += 2
-    func_name, offset = unpack_string(data, offset)
-    args_json, offset = unpack_string(data, offset, use_ushort=True)
-    return {"type": "rpc", "senderClientNo": sender, "targetClientNos": targets,
-            "functionName": func_name, "args": json.loads(args_json) if args_json else []}
+def _adapt_id_mapping(raw: dict) -> dict:
+    return {
+        "type": "id_mapping",
+        "serverVersion": raw.get("serverVersion", "0.0.0"),
+        "mappings": [
+            {
+                "clientNo": mapping.get("clientNo"),
+                "deviceId": mapping.get("deviceId", ""),
+                "stealth": bool(mapping.get("isStealthMode", False)),
+            }
+            for mapping in raw.get("mappings", [])
+        ],
+    }
 
-def deserialize_id_mapping(data: bytes) -> dict:
-    offset = 1
-    ver_major = data[offset]; offset += 1
-    ver_minor = data[offset]; offset += 1
-    ver_patch = data[offset]; offset += 1
-    count = struct.unpack("<H", data[offset:offset+2])[0]; offset += 2
-    mappings = []
-    for _ in range(count):
-        cno = struct.unpack("<H", data[offset:offset+2])[0]; offset += 2
-        is_stealth = data[offset] == 0x01; offset += 1
-        dev_id, offset = unpack_string(data, offset)
-        mappings.append({"clientNo": cno, "deviceId": dev_id, "stealth": is_stealth})
-    return {"type": "id_mapping", "serverVersion": f"{ver_major}.{ver_minor}.{ver_patch}", "mappings": mappings}
 
-def deserialize_global_var_sync(data: bytes) -> dict:
-    offset = 1
-    count = struct.unpack("<H", data[offset:offset+2])[0]; offset += 2
-    variables = []
-    for _ in range(count):
-        name, offset = unpack_string(data, offset)
-        value, offset = unpack_string(data, offset, use_ushort=True)
-        ts = struct.unpack("<d", data[offset:offset+8])[0]; offset += 8
-        writer = struct.unpack("<H", data[offset:offset+2])[0]; offset += 2
-        variables.append({"name": name, "value": value, "timestamp": ts, "lastWriter": writer})
-    return {"type": "global_var_sync", "variables": variables}
+def _adapt_global_var_sync(raw: dict) -> dict:
+    return {
+        "type": "global_var_sync",
+        "variables": [
+            {
+                "name": variable.get("name", ""),
+                "value": variable.get("value", ""),
+                "timestamp": variable.get("timestamp", 0.0),
+                "lastWriter": variable.get("lastWriterClientNo", 0),
+            }
+            for variable in raw.get("variables", [])
+        ],
+    }
 
-def deserialize_client_var_sync(data: bytes) -> dict:
-    offset = 1
-    client_count = struct.unpack("<H", data[offset:offset+2])[0]; offset += 2
-    client_vars = {}
-    for _ in range(client_count):
-        cno = struct.unpack("<H", data[offset:offset+2])[0]; offset += 2
-        var_count = struct.unpack("<H", data[offset:offset+2])[0]; offset += 2
-        variables = []
-        for _ in range(var_count):
-            name, offset = unpack_string(data, offset)
-            value, offset = unpack_string(data, offset, use_ushort=True)
-            ts = struct.unpack("<d", data[offset:offset+8])[0]; offset += 8
-            writer = struct.unpack("<H", data[offset:offset+2])[0]; offset += 2
-            variables.append({"name": name, "value": value, "timestamp": ts, "lastWriter": writer})
-        client_vars[str(cno)] = variables
-    return {"type": "client_var_sync", "clientVariables": client_vars}
+
+def _adapt_client_var_sync(raw: dict) -> dict:
+    return {
+        "type": "client_var_sync",
+        "clientVariables": {
+            client_no: [
+                {
+                    "name": variable.get("name", ""),
+                    "value": variable.get("value", ""),
+                    "timestamp": variable.get("timestamp", 0.0),
+                    "lastWriter": variable.get("lastWriterClientNo", 0),
+                }
+                for variable in variables
+            ]
+            for client_no, variables in (raw.get("clientVariables") or {}).items()
+        },
+    }
+
 
 def deserialize_sub_message(topic: bytes, payload: bytes) -> dict | None:
+    del topic
     if not payload:
         return None
-    msg_type = payload[0]
     try:
-        if msg_type == MSG_ROOM_POSE:
-            return deserialize_room_pose(payload)
-        elif msg_type == MSG_RPC:
-            return deserialize_rpc(payload)
-        elif msg_type == MSG_DEVICE_ID_MAPPING:
-            return deserialize_id_mapping(payload)
-        elif msg_type == MSG_GLOBAL_VAR_SYNC:
-            return deserialize_global_var_sync(payload)
-        elif msg_type == MSG_CLIENT_VAR_SYNC:
-            return deserialize_client_var_sync(payload)
-    except Exception as e:
-        print(f"Deserialize error (type={msg_type}): {e}")
+        msg_type, data, _ = deserialize(payload)
+    except Exception as exc:
+        print(f"Deserialize error: {exc}")
+        return None
+
+    if data is None:
+        return None
+
+    if msg_type == MSG_ROOM_POSE:
+        return _adapt_room_pose(data)
+    if msg_type == MSG_RPC:
+        return _adapt_rpc(data)
+    if msg_type == MSG_DEVICE_ID_MAPPING:
+        return _adapt_id_mapping(data)
+    if msg_type == MSG_GLOBAL_VAR_SYNC:
+        return _adapt_global_var_sync(data)
+    if msg_type == MSG_CLIENT_VAR_SYNC:
+        return _adapt_client_var_sync(data)
     return None
+
+
+def make_stealth_handshake(device_id: str) -> bytes:
+    tx = create_stealth_transform()
+    tx.device_id = device_id
+    return serialize_client_transform(client_transform_to_wire(tx))
+
+
+def make_rpc(
+    function_name: str,
+    args: list[str],
+    sender_client_no: int = 0,
+    target_client_nos: list[int] | None = None,
+) -> bytes:
+    return serialize_rpc_message(
+        {
+            "senderClientNo": sender_client_no,
+            "targetClientNos": target_client_nos or [],
+            "functionName": function_name,
+            "argumentsJson": json.dumps(args),
+        }
+    )
+
+
+def make_global_var_set(sender_client_no: int, name: str, value: str) -> bytes:
+    return serialize_global_var_set(
+        {
+            "senderClientNo": sender_client_no,
+            "variableName": name,
+            "variableValue": value,
+            "timestamp": time.time(),
+        }
+    )
+
+
+def make_client_var_set(
+    sender_client_no: int,
+    target_client_no: int,
+    name: str,
+    value: str,
+) -> bytes:
+    return serialize_client_var_set(
+        {
+            "senderClientNo": sender_client_no,
+            "targetClientNo": target_client_no,
+            "variableName": name,
+            "variableValue": value,
+            "timestamp": time.time(),
+        }
+    )
 
 
 def get_lan_ipv4_candidates() -> list[str]:
@@ -689,7 +593,7 @@ class DummyAvatar:
         self.loco_x += (target_loco_x - self.loco_x) * blend
         self.loco_z += (target_loco_z - self.loco_z) * blend
 
-    def get_transform(self, now: float) -> dict:
+    def build_payload(self, now: float) -> bytes:
         moving = bool(self.targets)
         amplitude = 0.2 if moving else 0.03
         frequency = 4.0 if moving else 0.8
@@ -699,32 +603,65 @@ class DummyAvatar:
         head_x = self.phys_x + self.loco_x
         head_y = self.head_height
         head_z = self.phys_z + self.loco_z
-        head_pos = (head_x, head_y, head_z)
+        half_yaw = self.head_yaw_rad * 0.5
+        head_quat = (0.0, math.sin(half_yaw), 0.0, math.cos(half_yaw))
 
-        right_rel = (0.24, -0.34 + lift, 0.18 + swing)
-        left_rel = (-0.24, -0.34 + lift, 0.18 - swing)
+        right_x = head_x + 0.24
+        right_y = head_y - 0.34 + lift
+        right_z = head_z + 0.18 + swing
+        left_x = head_x - 0.24
+        left_y = head_y - 0.34 + lift
+        left_z = head_z + 0.18 - swing
 
         virtuals = []
         for orbit in self.virtual_orbits:
             angle = (now * orbit["speed"]) + orbit["phase"]
-            virtuals.append((
-                head_x + math.cos(angle) * orbit["radius"],
-                head_y + orbit["height"] + (0.05 * math.sin(angle * 1.7)),
-                head_z + math.sin(angle) * orbit["radius"],
-            ))
+            virtuals.append(
+                transform_data(
+                    pos_x=head_x + math.cos(angle) * orbit["radius"],
+                    pos_y=head_y + orbit["height"] + (0.05 * math.sin(angle * 1.7)),
+                    pos_z=head_z + math.sin(angle) * orbit["radius"],
+                )
+            )
 
-        result = {
-            "device_id": self.device_id,
-            "head_pos": head_pos,
-            "head_yaw_rad": self.head_yaw_rad,
-            "right_rel": right_rel,
-            "left_rel": left_rel,
-            "physical_pos": (self.phys_x, 0.0, self.phys_z),
-            "virtuals": virtuals,
-            "pose_seq": self.pose_seq,
-        }
+        flags = POSE_FLAG_PHYSICAL_VALID | POSE_FLAG_HEAD_VALID | POSE_FLAG_RIGHT_VALID | POSE_FLAG_LEFT_VALID
+        if virtuals:
+            flags |= POSE_FLAG_VIRTUALS_VALID
+
+        transform = client_transform_data(
+            device_id=self.device_id,
+            pose_seq=self.pose_seq,
+            flags=flags,
+            head=transform_data(
+                pos_x=head_x,
+                pos_y=head_y,
+                pos_z=head_z,
+                rot_x=head_quat[0],
+                rot_y=head_quat[1],
+                rot_z=head_quat[2],
+                rot_w=head_quat[3],
+            ),
+            right_hand=transform_data(pos_x=right_x, pos_y=right_y, pos_z=right_z),
+            left_hand=transform_data(pos_x=left_x, pos_y=left_y, pos_z=left_z),
+            physical=transform_data(
+                pos_x=self.phys_x,
+                pos_y=0.0,
+                pos_z=self.phys_z,
+                rot_x=head_quat[0],
+                rot_y=head_quat[1],
+                rot_z=head_quat[2],
+                rot_w=head_quat[3],
+                is_local_space=True,
+            ),
+            virtuals=virtuals,
+        )
+        wire = client_transform_to_wire(transform)
+        wire["xrOriginDeltaX"] = head_x - self.phys_x
+        wire["xrOriginDeltaZ"] = head_z - self.phys_z
+        wire["xrOriginDeltaYaw"] = 0.0
+
         self.pose_seq = (self.pose_seq + 1) & 0xFFFF
-        return result
+        return serialize_client_transform(wire)
 
 
 class DummyAvatarManager:
@@ -819,17 +756,7 @@ class DummyAvatarManager:
 
             for avatar in list(self.avatars):
                 avatar.update(dt)
-                transform = avatar.get_transform(now)
-                payload = serialize_avatar_transform(
-                    device_id=transform["device_id"],
-                    head_pos=transform["head_pos"],
-                    head_yaw_rad=transform["head_yaw_rad"],
-                    right_rel=transform["right_rel"],
-                    left_rel=transform["left_rel"],
-                    physical_pos=transform["physical_pos"],
-                    virtuals=transform["virtuals"],
-                    pose_seq=transform["pose_seq"],
-                )
+                payload = avatar.build_payload(now)
                 try:
                     await avatar.socket.send_multipart([room_bytes, payload])
                 except Exception as exc:
@@ -1053,7 +980,7 @@ class WebBridge:
         dealer.setsockopt(zmq.LINGER, 0)
         dealer.connect(f"{self.server_address}:{self.dealer_port}")
 
-        handshake = serialize_stealth_handshake(device_id)
+        handshake = make_stealth_handshake(device_id)
         await dealer.send_multipart([self.room_id.encode("utf-8"), handshake])
         print(f"[DEALER] Sent stealth handshake for {device_id}")
 
@@ -1064,7 +991,7 @@ class WebBridge:
             while ws in self.ws_clients:
                 await asyncio.sleep(2.0)
                 try:
-                    hs = serialize_stealth_handshake(device_id)
+                    hs = make_stealth_handshake(device_id)
                     await dealer.send_multipart([self.room_id.encode("utf-8"), hs])
                 except Exception:
                     break
@@ -1079,7 +1006,7 @@ class WebBridge:
                 room = self.room_id.encode("utf-8")
 
                 if action == "rpc":
-                    payload = serialize_rpc(
+                    payload = make_rpc(
                         msg["functionName"],
                         msg.get("args", []),
                         msg.get("senderClientNo", 0),
@@ -1088,14 +1015,14 @@ class WebBridge:
                     await dealer.send_multipart([room, payload])
 
                 elif action == "set_global_var":
-                    payload = serialize_global_var_set(
+                    payload = make_global_var_set(
                         msg.get("senderClientNo", 0),
                         msg["name"], msg["value"]
                     )
                     await dealer.send_multipart([room, payload])
 
                 elif action == "set_client_var":
-                    payload = serialize_client_var_set(
+                    payload = make_client_var_set(
                         msg.get("senderClientNo", 0),
                         msg["targetClientNo"],
                         msg["name"], msg["value"]
