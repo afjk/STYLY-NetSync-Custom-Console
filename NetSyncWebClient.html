@@ -613,6 +613,75 @@ const MAX_BRIDGE_URL_HISTORY = 8;
 const BRIDGE_START_GUIDE_URL = "https://github.com/afjk/STYLY-NetSync-Custom-Console/blob/main/README.ja.md#%E8%B5%B7%E5%8B%95";
 let watchedClientVars = [];
 
+const AppState = {
+  get ws() { return ws; },
+  set ws(value) { ws = value; },
+  get clients() { return clients; },
+  set clients(value) { clients = value; },
+  get idMappings() { return idMappings; },
+  set idMappings(value) { idMappings = value; },
+  get globalVars() { return globalVars; },
+  set globalVars(value) { globalVars = value; },
+  get clientVars() { return clientVars; },
+  set clientVars(value) { clientVars = value; },
+  get selectedClientNo() { return selectedClientNo; },
+  set selectedClientNo(value) { selectedClientNo = value; },
+  get roomSummary() { return roomSummary; },
+  set roomSummary(value) { roomSummary = value; },
+};
+
+const DummyState = {
+  get dummies() { return dummies; },
+  set dummies(value) { dummies = value; },
+  get selectedIndex() { return selectedDummyIndex; },
+  set selectedIndex(value) { selectedDummyIndex = value; },
+  get count() { return dummyCount; },
+  set count(value) { dummyCount = value; },
+  get spawnMode() { return spawnMode; },
+  set spawnMode(value) { spawnMode = value; },
+  get spawnPreviewWorld() { return spawnPreviewWorld; },
+  set spawnPreviewWorld(value) { spawnPreviewWorld = value; },
+};
+
+const MapState = {
+  get canvasView() { return canvasView; },
+  set canvasView(value) { canvasView = value; },
+  get commandMarkers() { return mapCommandMarkers; },
+  set commandMarkers(value) { mapCommandMarkers = value; },
+  get redrawFrame() { return mapRedrawFrame; },
+  set redrawFrame(value) { mapRedrawFrame = value; },
+  get hitTargets() { return mapHitTargets; },
+  set hitTargets(value) { mapHitTargets = value; },
+};
+
+const UiState = {
+  get preserveDetailRenderUntil() { return preserveDetailRenderUntil; },
+  set preserveDetailRenderUntil(value) { preserveDetailRenderUntil = value; },
+  get preserveGlobalRenderUntil() { return preserveGlobalRenderUntil; },
+  set preserveGlobalRenderUntil(value) { preserveGlobalRenderUntil = value; },
+  get watchedClientVars() { return watchedClientVars; },
+  set watchedClientVars(value) { watchedClientVars = value; },
+};
+
+const MAP_THEME = {
+  backgroundColor: "#0c1017",
+  gridColor: "#1d2635",
+  originColor: "rgba(255,255,255,.65)",
+  scaleBarColor: "#dbe4ee",
+  emptyColor: "#687386",
+  handLineColor: "rgba(232, 237, 242, 0.25)",
+  handFillColor: "rgba(232, 237, 242, 0.55)",
+  selectedRingColor: "#f4c542",
+  selectedDummyRingColor: "rgba(255, 255, 255, 0.95)",
+  spawnPreviewFill: "rgba(143, 183, 255, 0.12)",
+  spawnPreviewStroke: "rgba(143, 183, 255, 0.45)",
+  markerColor: "rgba(255, 86, 86, 1)",
+  font: "11px sans-serif",
+  headRadius: 6,
+  selectedHeadRadius: 8,
+  handRadius: 3,
+};
+
 function isConnected() {
   return !!ws && ws.readyState === 1;
 }
@@ -789,6 +858,10 @@ function renderWatchedClientVars() {
     .join("");
 }
 
+function createDefaultRoomSummary() {
+  return { roomClientCount: 0, poseClientCount: 0, stealthClientCount: 0, webClientCount: 0, maxRecommendedClients: 100 };
+}
+
 function connect() {
   const url = normalizeBridgeUrl(document.getElementById("ws-url").value);
   if (!url) {
@@ -815,20 +888,20 @@ function connect() {
 
   document.getElementById("ws-url").value = saveBridgeUrlToHistory(url);
   localStorage.setItem(BRIDGE_AUTO_CONNECT_KEY, "1");
-  if (ws && ws.readyState <= 1) ws.close();
-  ws = new WebSocket(url);
-  ws.onopen = () => {
+  if (AppState.ws && AppState.ws.readyState <= 1) AppState.ws.close();
+  AppState.ws = new WebSocket(url);
+  AppState.ws.onopen = () => {
     setStatus(true);
     requestSnapshot();
   };
-  ws.onclose = () => setStatus(false);
-  ws.onerror = () => toast(
+  AppState.ws.onclose = () => setStatus(false);
+  AppState.ws.onerror = () => toast(
     "Bridge Serverが見つかりません。先にBridge Serverを起動してからConnectしてください。",
     true,
     8000,
     { label: "起動方法", href: BRIDGE_START_GUIDE_URL }
   );
-  ws.onmessage = event => handleMessage(JSON.parse(event.data));
+  AppState.ws.onmessage = event => handleMessage(JSON.parse(event.data));
 }
 
 function disconnect() {
@@ -841,22 +914,22 @@ function openViewer3d() {
 }
 
 function clearLiveState() {
-  clients = {};
-  idMappings = {};
-  globalVars = {};
-  clientVars = {};
-  selectedClientNo = null;
-  roomSummary = { roomClientCount: 0, poseClientCount: 0, stealthClientCount: 0, webClientCount: 0, maxRecommendedClients: 100 };
-  preserveDetailRenderUntil = 0;
-  preserveGlobalRenderUntil = 0;
-  mapHitTargets = [];
-  dummyCount = 0;
-  canvasView = { centerX: 0, centerZ: 0, scale: 40 };
-  mapCommandMarkers = [];
-  dummies = [];
-  selectedDummyIndex = null;
-  spawnMode = false;
-  spawnPreviewWorld = null;
+  AppState.clients = {};
+  AppState.idMappings = {};
+  AppState.globalVars = {};
+  AppState.clientVars = {};
+  AppState.selectedClientNo = null;
+  AppState.roomSummary = createDefaultRoomSummary();
+  UiState.preserveDetailRenderUntil = 0;
+  UiState.preserveGlobalRenderUntil = 0;
+  MapState.hitTargets = [];
+  DummyState.count = 0;
+  MapState.canvasView = { centerX: 0, centerZ: 0, scale: 40 };
+  MapState.commandMarkers = [];
+  DummyState.dummies = [];
+  DummyState.selectedIndex = null;
+  DummyState.spawnMode = false;
+  DummyState.spawnPreviewWorld = null;
   renderAll();
 }
 
@@ -1027,6 +1100,8 @@ function renderParticipants() {
     return;
   }
 
+  // NOTE: Full innerHTML replacement is acceptable for <100 rows.
+  // For larger participant counts, consider incremental DOM updates.
   const watchedHeaders = watchedClientVars.map(name => `<th>${esc(name)}</th>`).join("");
   let html = `<table><thead><tr><th>Client</th><th>Device ID</th><th>Type</th><th>Pose</th><th>Vars</th>${watchedHeaders}<th class="col-position">Position</th></tr></thead><tbody>`;
   for (const row of rows) {
@@ -1056,6 +1131,8 @@ function renderGlobalVars() {
     el.innerHTML = `<div class="empty">No variables</div>`;
     return;
   }
+  // NOTE: Full innerHTML replacement is acceptable for <100 rows.
+  // For larger variable counts, consider incremental DOM updates.
   let html = "<table><thead><tr><th>Name</th><th>Value</th><th>Writer</th></tr></thead><tbody>";
   keys.forEach((name, index) => {
     const v = globalVars[name];
@@ -1095,19 +1172,6 @@ function selectClient(cno, options = {}) {
   if (options.scrollIntoList) {
     requestAnimationFrame(scrollSelectedParticipantIntoView);
   }
-}
-
-function initializeParticipantGridUi() {
-  const grid = document.getElementById("participants-grid");
-  grid.addEventListener("pointerdown", event => {
-    let row = event.target.closest(".participant-row");
-    if (!row || !grid.contains(row)) {
-      row = getParticipantRowAtPoint(event.clientX, event.clientY);
-    }
-    if (!row) return;
-    event.preventDefault();
-    selectClient(row.dataset.clientNo);
-  });
 }
 
 function getDummySpawnConfig() {
@@ -1185,34 +1249,34 @@ function chooseNiceStep(value) {
 
 function worldToCanvas(wx, wz, width, height) {
   return {
-    x: width / 2 + (wx - canvasView.centerX) * canvasView.scale,
-    y: height / 2 - (wz - canvasView.centerZ) * canvasView.scale
+    x: width / 2 + (wx - MapState.canvasView.centerX) * MapState.canvasView.scale,
+    y: height / 2 - (wz - MapState.canvasView.centerZ) * MapState.canvasView.scale
   };
 }
 
 function canvasToWorld(px, py, width, height) {
   return {
-    x: canvasView.centerX + ((px - width / 2) / canvasView.scale),
-    z: canvasView.centerZ - ((py - height / 2) / canvasView.scale)
+    x: MapState.canvasView.centerX + ((px - width / 2) / MapState.canvasView.scale),
+    z: MapState.canvasView.centerZ - ((py - height / 2) / MapState.canvasView.scale)
   };
 }
 
 function addMapCommandMarker(x, z) {
-  mapCommandMarkers.push({ x, z, createdAt: performance.now() });
-  mapCommandMarkers = mapCommandMarkers.slice(-10);
+  MapState.commandMarkers.push({ x, z, createdAt: performance.now() });
+  MapState.commandMarkers = MapState.commandMarkers.slice(-10);
   scheduleMapRedraw();
 }
 
 function scheduleMapRedraw() {
-  if (mapRedrawFrame) return;
-  mapRedrawFrame = requestAnimationFrame(() => {
-    mapRedrawFrame = 0;
+  if (MapState.redrawFrame) return;
+  MapState.redrawFrame = requestAnimationFrame(() => {
+    MapState.redrawFrame = 0;
     drawAvatars();
   });
 }
 
 function findMapHitTarget(x, y) {
-  return mapHitTargets
+  return MapState.hitTargets
     .map(target => ({
       ...target,
       distance: Math.hypot(target.x - x, target.y - y)
@@ -1390,9 +1454,16 @@ function handleVariableAction(event) {
   return false;
 }
 
-function initializeVariableActions() {
+function initializeEventDelegation() {
   document.addEventListener("pointerdown", event => {
-    handleVariableAction(event);
+    if (handleVariableAction(event)) return;
+    let row = event.target.closest("#participants-grid .participant-row");
+    if (!row) {
+      row = getParticipantRowAtPoint(event.clientX, event.clientY);
+    }
+    if (!row) return;
+    event.preventDefault();
+    selectClient(row.dataset.clientNo);
   });
   document.addEventListener("click", event => {
     if (event.detail === 0) handleVariableAction(event);
@@ -1507,81 +1578,103 @@ function renderAll() {
   drawAvatars();
 }
 
-function handleMessage(msg) {
-  switch (msg.type) {
-    case "room_pose": {
-      const alive = new Set();
-      for (const c of msg.clients || []) {
-        alive.add(Number(c.clientNo));
-        clients[c.clientNo] = c;
-      }
-      for (const cno of Object.keys(clients)) {
-        if (!alive.has(Number(cno))) delete clients[cno];
-      }
-      roomSummary.poseClientCount = (msg.clients || []).length;
-      roomSummary.roomClientCount = Object.keys(idMappings).length > 0
-        ? Object.values(idMappings).filter(m => !m.stealth).length
-        : (msg.clients || []).length;
-      renderAll();
-      break;
-    }
-    case "bridge_status":
-      roomSummary = { ...roomSummary, ...(msg.roomSummary || {}) };
-      dummyCount = Number(msg.dummyCount || 0);
-      renderAll();
-      break;
-    case "id_mapping":
-      idMappings = {};
-      for (const m of msg.mappings || []) idMappings[m.clientNo] = m;
-      roomSummary.roomClientCount = (msg.mappings || []).filter(m => !m.stealth).length;
-      pruneDisconnectedClientState();
-      renderAll();
-      break;
-    case "global_var_sync":
-      for (const v of msg.variables || []) {
-        globalVars[v.name] = { value: v.value, timestamp: v.timestamp, lastWriter: v.lastWriter };
-      }
-      renderAll();
-      break;
-    case "client_var_sync":
-      for (const [cno, vars] of Object.entries(msg.clientVariables || {})) {
-        if (!clientVars[cno]) clientVars[cno] = {};
-        for (const v of vars) {
-          clientVars[cno][v.name] = { value: v.value, timestamp: v.timestamp, lastWriter: v.lastWriter };
-        }
-      }
-      renderAll();
-      break;
-    case "nv_snapshot":
-      globalVars = msg.globalVariables || {};
-      clientVars = msg.clientVariables || {};
-      idMappings = {};
-      for (const m of msg.idMappings || []) idMappings[m.clientNo] = m;
-      roomSummary = { ...roomSummary, ...(msg.roomSummary || {}) };
-      dummyCount = Number(msg.dummyCount || 0);
-      dummies = msg.dummies || [];
-      if (selectedDummyIndex !== null && selectedDummyIndex >= dummies.length) {
-        selectedDummyIndex = null;
-      }
-      pruneDisconnectedClientState();
-      renderAll();
-      break;
-    case "dummy_status":
-      dummyCount = Number(msg.count || 0);
-      renderAll();
-      break;
-    case "dummy_list":
-      dummies = msg.dummies || [];
-      dummyCount = Number(msg.count || dummies.length || 0);
-      if (selectedDummyIndex !== null && selectedDummyIndex >= dummies.length) {
-        selectedDummyIndex = null;
-      }
-      renderAll();
-      break;
-    case "rpc":
-      toast(`RPC #${msg.senderClientNo}: ${msg.functionName}`);
-      break;
+function handleRoomPose(msg) {
+  const alive = new Set();
+  for (const c of msg.clients || []) {
+    alive.add(Number(c.clientNo));
+    AppState.clients[c.clientNo] = c;
   }
+  for (const cno of Object.keys(AppState.clients)) {
+    if (!alive.has(Number(cno))) delete AppState.clients[cno];
+  }
+  AppState.roomSummary.poseClientCount = (msg.clients || []).length;
+  AppState.roomSummary.roomClientCount = Object.keys(AppState.idMappings).length > 0
+    ? Object.values(AppState.idMappings).filter(m => !m.stealth).length
+    : (msg.clients || []).length;
+  renderAll();
+}
+
+function handleBridgeStatus(msg) {
+  AppState.roomSummary = { ...AppState.roomSummary, ...(msg.roomSummary || {}) };
+  DummyState.count = Number(msg.dummyCount || 0);
+  renderAll();
+}
+
+function handleIdMapping(msg) {
+  AppState.idMappings = {};
+  for (const m of msg.mappings || []) AppState.idMappings[m.clientNo] = m;
+  AppState.roomSummary.roomClientCount = (msg.mappings || []).filter(m => !m.stealth).length;
+  pruneDisconnectedClientState();
+  renderAll();
+}
+
+function handleGlobalVarSync(msg) {
+  for (const v of msg.variables || []) {
+    AppState.globalVars[v.name] = { value: v.value, timestamp: v.timestamp, lastWriter: v.lastWriter };
+  }
+  renderAll();
+}
+
+function handleClientVarSync(msg) {
+  for (const [cno, vars] of Object.entries(msg.clientVariables || {})) {
+    if (!AppState.clientVars[cno]) AppState.clientVars[cno] = {};
+    for (const v of vars) {
+      AppState.clientVars[cno][v.name] = { value: v.value, timestamp: v.timestamp, lastWriter: v.lastWriter };
+    }
+  }
+  renderAll();
+}
+
+function syncDummySelectionBounds() {
+  if (DummyState.selectedIndex !== null && DummyState.selectedIndex >= DummyState.dummies.length) {
+    DummyState.selectedIndex = null;
+  }
+}
+
+function handleNvSnapshot(msg) {
+  AppState.globalVars = msg.globalVariables || {};
+  AppState.clientVars = msg.clientVariables || {};
+  AppState.idMappings = {};
+  for (const m of msg.idMappings || []) AppState.idMappings[m.clientNo] = m;
+  AppState.roomSummary = { ...AppState.roomSummary, ...(msg.roomSummary || {}) };
+  DummyState.count = Number(msg.dummyCount || 0);
+  DummyState.dummies = msg.dummies || [];
+  syncDummySelectionBounds();
+  pruneDisconnectedClientState();
+  renderAll();
+}
+
+function handleDummyStatus(msg) {
+  DummyState.count = Number(msg.count || 0);
+  renderAll();
+}
+
+function handleDummyList(msg) {
+  DummyState.dummies = msg.dummies || [];
+  DummyState.count = Number(msg.count || DummyState.dummies.length || 0);
+  syncDummySelectionBounds();
+  renderAll();
+}
+
+function handleRpc(msg) {
+  toast(`RPC #${msg.senderClientNo}: ${msg.functionName}`);
+}
+
+const messageHandlers = {
+  room_pose: handleRoomPose,
+  bridge_status: handleBridgeStatus,
+  id_mapping: handleIdMapping,
+  global_var_sync: handleGlobalVarSync,
+  client_var_sync: handleClientVarSync,
+  nv_snapshot: handleNvSnapshot,
+  dummy_status: handleDummyStatus,
+  dummy_list: handleDummyList,
+  rpc: handleRpc,
+};
+
+function handleMessage(msg) {
+  const handler = messageHandlers[msg.type];
+  if (handler) handler(msg);
 }
 
 function sendRpc(targetClientNo) {
@@ -1708,9 +1801,9 @@ function collectMapBoundsPoints() {
 function drawSpawnPreview(ctx, width, height) {
   if (!spawnMode || !spawnPreviewWorld) return;
   const point = worldToCanvas(spawnPreviewWorld.x, spawnPreviewWorld.z, width, height);
-  const radiusPx = 1.5 * canvasView.scale;
-  ctx.fillStyle = "rgba(143, 183, 255, 0.12)";
-  ctx.strokeStyle = "rgba(143, 183, 255, 0.45)";
+  const radiusPx = 1.5 * MapState.canvasView.scale;
+  ctx.fillStyle = MAP_THEME.spawnPreviewFill;
+  ctx.strokeStyle = MAP_THEME.spawnPreviewStroke;
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.arc(point.x, point.y, radiusPx, 0, Math.PI * 2);
@@ -1719,7 +1812,7 @@ function drawSpawnPreview(ctx, width, height) {
 }
 
 function drawGrid(ctx, width, height, pixelStep = null) {
-  ctx.strokeStyle = "#1d2635";
+  ctx.strokeStyle = MAP_THEME.gridColor;
   ctx.lineWidth = 1;
   if (pixelStep != null) {
     for (let x = 0; x <= width; x += pixelStep) {
@@ -1737,23 +1830,23 @@ function drawGrid(ctx, width, height, pixelStep = null) {
     return;
   }
 
-  const stepWorld = chooseNiceStep(40 / canvasView.scale);
-  const worldHalfWidth = width / (2 * canvasView.scale);
-  const worldHalfHeight = height / (2 * canvasView.scale);
-  const minWorldX = canvasView.centerX - worldHalfWidth;
-  const maxWorldX = canvasView.centerX + worldHalfWidth;
-  const minWorldZ = canvasView.centerZ - worldHalfHeight;
-  const maxWorldZ = canvasView.centerZ + worldHalfHeight;
+  const stepWorld = chooseNiceStep(40 / MapState.canvasView.scale);
+  const worldHalfWidth = width / (2 * MapState.canvasView.scale);
+  const worldHalfHeight = height / (2 * MapState.canvasView.scale);
+  const minWorldX = MapState.canvasView.centerX - worldHalfWidth;
+  const maxWorldX = MapState.canvasView.centerX + worldHalfWidth;
+  const minWorldZ = MapState.canvasView.centerZ - worldHalfHeight;
+  const maxWorldZ = MapState.canvasView.centerZ + worldHalfHeight;
 
   for (let wx = Math.floor(minWorldX / stepWorld) * stepWorld; wx <= maxWorldX; wx += stepWorld) {
-    const point = worldToCanvas(wx, canvasView.centerZ, width, height);
+    const point = worldToCanvas(wx, MapState.canvasView.centerZ, width, height);
     ctx.beginPath();
     ctx.moveTo(point.x, 0);
     ctx.lineTo(point.x, height);
     ctx.stroke();
   }
   for (let wz = Math.floor(minWorldZ / stepWorld) * stepWorld; wz <= maxWorldZ; wz += stepWorld) {
-    const point = worldToCanvas(canvasView.centerX, wz, width, height);
+    const point = worldToCanvas(MapState.canvasView.centerX, wz, width, height);
     ctx.beginPath();
     ctx.moveTo(0, point.y);
     ctx.lineTo(width, point.y);
@@ -1763,7 +1856,7 @@ function drawGrid(ctx, width, height, pixelStep = null) {
 
 function drawOriginMarker(ctx, width, height) {
   const origin = worldToCanvas(0, 0, width, height);
-  ctx.strokeStyle = "rgba(255,255,255,.65)";
+  ctx.strokeStyle = MAP_THEME.originColor;
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.moveTo(origin.x - 8, origin.y);
@@ -1774,11 +1867,11 @@ function drawOriginMarker(ctx, width, height) {
 }
 
 function drawScaleBar(ctx, width, height) {
-  const distance = chooseNiceStep(110 / canvasView.scale);
-  const px = distance * canvasView.scale;
+  const distance = chooseNiceStep(110 / MapState.canvasView.scale);
+  const px = distance * MapState.canvasView.scale;
   const x = 18;
   const y = height - 18;
-  ctx.strokeStyle = "#dbe4ee";
+  ctx.strokeStyle = MAP_THEME.scaleBarColor;
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.moveTo(x, y);
@@ -1788,18 +1881,18 @@ function drawScaleBar(ctx, width, height) {
   ctx.moveTo(x + px, y - 6);
   ctx.lineTo(x + px, y + 6);
   ctx.stroke();
-  ctx.fillStyle = "#dbe4ee";
-  ctx.font = "11px sans-serif";
+  ctx.fillStyle = MAP_THEME.scaleBarColor;
+  ctx.font = MAP_THEME.font;
   ctx.textAlign = "left";
   ctx.fillText(`${distance.toFixed(distance >= 10 ? 0 : 1)} m`, x, y - 9);
 }
 
 function drawMapCommandFeedback(ctx, width, height) {
   const now = performance.now();
-  mapCommandMarkers = mapCommandMarkers.filter(marker => now - marker.createdAt < 5000);
-  if (!mapCommandMarkers.length) return;
+  MapState.commandMarkers = MapState.commandMarkers.filter(marker => now - marker.createdAt < 5000);
+  if (!MapState.commandMarkers.length) return;
 
-  for (const marker of mapCommandMarkers) {
+  for (const marker of MapState.commandMarkers) {
     const elapsed = now - marker.createdAt;
     const progress = elapsed / 5000;
     const alpha = 1 - progress;
@@ -1831,17 +1924,17 @@ function drawAvatars() {
   const height = canvas.height;
   const poseEntries = Object.entries(clients).filter(([, data]) => data?.head?.pos);
   const boundsPoints = collectMapBoundsPoints();
-  mapHitTargets = [];
+  MapState.hitTargets = [];
 
-  ctx.fillStyle = "#0c1017";
+  ctx.fillStyle = MAP_THEME.backgroundColor;
   ctx.fillRect(0, 0, width, height);
 
   if (!boundsPoints.length) {
-    canvasView = { centerX: 0, centerZ: 0, scale: 40 };
+    MapState.canvasView = { centerX: 0, centerZ: 0, scale: 40 };
     drawGrid(ctx, width, height, 40);
     drawOriginMarker(ctx, width, height);
     drawMapCommandFeedback(ctx, width, height);
-    ctx.fillStyle = "#687386";
+    ctx.fillStyle = MAP_THEME.emptyColor;
     ctx.font = "12px sans-serif";
     ctx.textAlign = "center";
     ctx.fillText("No clients", width / 2, height / 2);
@@ -1861,7 +1954,7 @@ function drawAvatars() {
 
   const rangeX = Math.max(maxX - minX, 2);
   const rangeZ = Math.max(maxZ - minZ, 2);
-  canvasView = {
+  MapState.canvasView = {
     centerX: (minX + maxX) / 2,
     centerZ: (minZ + maxZ) / 2,
     scale: Math.max(1, Math.min((width * 0.8) / rangeX, (height * 0.8) / rangeZ))
@@ -1884,7 +1977,7 @@ function drawAvatars() {
     const selectedDummy = Number(cno) === selectedDummyClientNo;
     const headPoint = worldToCanvas(pose.head.pos.x, pose.head.pos.z, width, height);
     const color = `hsl(${(Number(cno) * 47) % 360} 80% 62%)`;
-    mapHitTargets.push({ cno, x: headPoint.x, y: headPoint.y, radius: selected || selectedDummy ? 24 : 18 });
+    MapState.hitTargets.push({ cno, x: headPoint.x, y: headPoint.y, radius: selected || selectedDummy ? 24 : 18 });
 
     for (const handKey of ["right", "left"]) {
       const hand = pose[handKey]?.relPos;
@@ -1895,20 +1988,20 @@ function drawAvatars() {
         width,
         height
       );
-      ctx.strokeStyle = "rgba(232, 237, 242, 0.25)";
+      ctx.strokeStyle = MAP_THEME.handLineColor;
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(headPoint.x, headPoint.y);
       ctx.lineTo(handPoint.x, handPoint.y);
       ctx.stroke();
-      ctx.fillStyle = "rgba(232, 237, 242, 0.55)";
+      ctx.fillStyle = MAP_THEME.handFillColor;
       ctx.beginPath();
-      ctx.arc(handPoint.x, handPoint.y, 3, 0, Math.PI * 2);
+      ctx.arc(handPoint.x, handPoint.y, MAP_THEME.handRadius, 0, Math.PI * 2);
       ctx.fill();
     }
 
     if (selected) {
-      ctx.strokeStyle = "#f4c542";
+      ctx.strokeStyle = MAP_THEME.selectedRingColor;
       ctx.lineWidth = 4;
       ctx.beginPath();
       ctx.arc(headPoint.x, headPoint.y, 15, 0, Math.PI * 2);
@@ -1921,7 +2014,7 @@ function drawAvatars() {
     }
 
     if (selectedDummy) {
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+      ctx.strokeStyle = MAP_THEME.selectedDummyRingColor;
       ctx.lineWidth = 4;
       ctx.beginPath();
       ctx.arc(headPoint.x, headPoint.y, 20, 0, Math.PI * 2);
@@ -1935,13 +2028,13 @@ function drawAvatars() {
 
     ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.arc(headPoint.x, headPoint.y, selected || selectedDummy ? 8 : 6, 0, Math.PI * 2);
+    ctx.arc(headPoint.x, headPoint.y, selected || selectedDummy ? MAP_THEME.selectedHeadRadius : MAP_THEME.headRadius, 0, Math.PI * 2);
     ctx.fill();
     ctx.strokeStyle = selectedDummy ? "#ffffff" : selected ? "#fff3bd" : "#0c1017";
     ctx.lineWidth = selected || selectedDummy ? 2 : 1;
     ctx.stroke();
     ctx.fillStyle = "#e8edf2";
-    ctx.font = "11px sans-serif";
+    ctx.font = MAP_THEME.font;
     ctx.textAlign = "left";
     ctx.fillText(`#${cno}`, headPoint.x + 9, headPoint.y + 4);
   }
@@ -1953,10 +2046,9 @@ function drawAvatars() {
 renderAll();
 initializeBridgeUrlUi();
 loadWatchedClientVars();
-initializeParticipantGridUi();
 initializeMapUi();
 initializeEditGuards();
-initializeVariableActions();
+initializeEventDelegation();
 updateSpawnButtonUi();
 renderAll();
 </script>

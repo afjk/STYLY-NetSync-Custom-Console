@@ -78,8 +78,8 @@
 <script type="importmap">
 {
   "imports": {
-    "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
   }
 }
 </script>
@@ -122,6 +122,10 @@
 <script type="module">
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+// =========================================================================
+// Scene Setup
+// =========================================================================
 
 const canvas = document.getElementById("scene");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -240,11 +244,36 @@ let dummies = [];
 let selectedDummyIndex = null;
 const BRIDGE_URL_STORAGE_KEY = "styly-netsync-bridge-url";
 const BRIDGE_AUTO_CONNECT_KEY = "styly-netsync-bridge-auto-connect";
+const AVATAR_CONFIG = {
+  headRadius: 0.18,
+  bodyRadiusTop: 0.18,
+  bodyRadiusBottom: 0.22,
+  bodyHeight: 0.9,
+  handRadius: 0.1,
+  physicalRingInner: 0.28,
+  physicalRingOuter: 0.38,
+  selectionRingInner: 0.4,
+  selectionRingOuter: 0.58,
+  labelScale: { x: 1.8, y: 0.68 },
+};
 
+// =========================================================================
+// WebSocket Communication
+// =========================================================================
+
+/**
+ * Convert Unity world coordinates to Three.js view coordinates.
+ * Unity is treated as left-handed with +Z forward, while the viewer uses
+ * a right-handed space, so the Z axis is negated.
+ */
 function unityToViewPosition(x, y, z) {
   return { x, y, z: -z };
 }
 
+/**
+ * Convert Three.js view coordinates back into Unity world coordinates.
+ * The handedness difference is handled by negating the Z axis again.
+ */
 function viewToUnityPosition(x, y, z) {
   return { x, y, z: -z };
 }
@@ -341,7 +370,7 @@ function createLabelSprite(text) {
   const texture = new THREE.CanvasTexture(labelCanvas);
   const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
   const sprite = new THREE.Sprite(material);
-  sprite.scale.set(1.8, 0.68, 1);
+  sprite.scale.set(AVATAR_CONFIG.labelScale.x, AVATAR_CONFIG.labelScale.y, 1);
   return sprite;
 }
 
@@ -354,6 +383,10 @@ function setCastShadow(object) {
   });
 }
 
+// =========================================================================
+// Avatar Management
+// =========================================================================
+
 function createAvatarGroup(clientNo) {
   const group = new THREE.Group();
   group.userData.clientNo = clientNo;
@@ -364,25 +397,31 @@ function createAvatarGroup(clientNo) {
   const handMaterial = new THREE.MeshStandardMaterial({ color: 0xf0f3f7, roughness: 0.36 });
   const physicalMaterial = new THREE.MeshStandardMaterial({ color: 0xb9c6d8, transparent: true, opacity: 0.25 });
 
-  const virtualBody = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 0.9, 16), bodyMaterial);
-  virtualBody.position.y = -0.45;
-  const virtualHead = new THREE.Mesh(new THREE.SphereGeometry(0.18, 20, 16), bodyMaterial);
-  const rightHand = new THREE.Mesh(new THREE.SphereGeometry(0.1, 16, 12), handMaterial);
-  const leftHand = new THREE.Mesh(new THREE.SphereGeometry(0.1, 16, 12), handMaterial);
+  const virtualBody = new THREE.Mesh(
+    new THREE.CylinderGeometry(AVATAR_CONFIG.bodyRadiusTop, AVATAR_CONFIG.bodyRadiusBottom, AVATAR_CONFIG.bodyHeight, 16),
+    bodyMaterial
+  );
+  virtualBody.position.y = -(AVATAR_CONFIG.bodyHeight * 0.5);
+  const virtualHead = new THREE.Mesh(new THREE.SphereGeometry(AVATAR_CONFIG.headRadius, 20, 16), bodyMaterial);
+  const rightHand = new THREE.Mesh(new THREE.SphereGeometry(AVATAR_CONFIG.handRadius, 16, 12), handMaterial);
+  const leftHand = new THREE.Mesh(new THREE.SphereGeometry(AVATAR_CONFIG.handRadius, 16, 12), handMaterial);
   virtualAnchor.add(virtualBody, virtualHead, rightHand, leftHand);
   setCastShadow(virtualAnchor);
 
-  const physicalBody = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 0.9, 16), physicalMaterial.clone());
-  physicalBody.position.y = -0.45;
-  const physicalHead = new THREE.Mesh(new THREE.SphereGeometry(0.18, 20, 16), physicalMaterial.clone());
+  const physicalBody = new THREE.Mesh(
+    new THREE.CylinderGeometry(AVATAR_CONFIG.bodyRadiusTop, AVATAR_CONFIG.bodyRadiusBottom, AVATAR_CONFIG.bodyHeight, 16),
+    physicalMaterial.clone()
+  );
+  physicalBody.position.y = -(AVATAR_CONFIG.bodyHeight * 0.5);
+  const physicalHead = new THREE.Mesh(new THREE.SphereGeometry(AVATAR_CONFIG.headRadius, 20, 16), physicalMaterial.clone());
   const physicalRing = new THREE.Mesh(
-    new THREE.RingGeometry(0.28, 0.38, 32),
+    new THREE.RingGeometry(AVATAR_CONFIG.physicalRingInner, AVATAR_CONFIG.physicalRingOuter, 32),
     new THREE.MeshBasicMaterial({ color: 0x8fb7ff, transparent: true, opacity: 0.4, side: THREE.DoubleSide })
   );
   physicalRing.rotation.x = -Math.PI / 2;
   physicalRing.position.y = -1.05;
   const selectionRing = new THREE.Mesh(
-    new THREE.RingGeometry(0.4, 0.58, 40),
+    new THREE.RingGeometry(AVATAR_CONFIG.selectionRingInner, AVATAR_CONFIG.selectionRingOuter, 40),
     new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
   );
   selectionRing.rotation.x = -Math.PI / 2;
@@ -653,6 +692,10 @@ function getDummyHitFromEvent(event) {
   return dummyIndex != null ? { clientNo, dummyIndex } : null;
 }
 
+// =========================================================================
+// Drag Interaction
+// =========================================================================
+
 function beginDrag(kind, event, dummyIndex = null) {
   dragActive = true;
   dragMode = kind;
@@ -664,6 +707,10 @@ function beginDrag(kind, event, dummyIndex = null) {
     updateSelectionUi();
   }
 }
+
+// =========================================================================
+// UI Controls
+// =========================================================================
 
 canvas.addEventListener("pointerdown", event => {
   updatePointer(event);
@@ -752,25 +799,10 @@ canvas.addEventListener("click", event => {
 });
 
 canvas.addEventListener("dblclick", event => {
-  updatePointer(event);
-  raycaster.setFromCamera(pointer, camera);
-  const hits = raycaster.intersectObjects(scene.children, true);
-  const hit = hits.find(entry => {
-    let current = entry.object;
-    while (current) {
-      if (current.userData?.clientNo != null) return true;
-      current = current.parent;
-    }
-    return false;
-  });
+  const hit = getDummyHitFromEvent(event);
   if (!hit) return;
-  let current = hit.object;
-  while (current && current.userData?.clientNo == null) current = current.parent;
-  const clientNo = current?.userData?.clientNo;
-  const dummyIndex = clientNo != null ? getDummyIndexByClientNo(clientNo) : null;
-  if (dummyIndex == null) return;
-  if (!sendJson({ action: "despawn_one", index: dummyIndex })) return;
-  if (selectedDummyIndex === dummyIndex) selectedDummyIndex = null;
+  if (!sendJson({ action: "despawn_one", index: hit.dummyIndex })) return;
+  if (selectedDummyIndex === hit.dummyIndex) selectedDummyIndex = null;
   updateSelectionUi();
   addLog("despawn one requested");
 });
@@ -800,6 +832,10 @@ document.getElementById("deselect-btn").addEventListener("click", () => {
 document.querySelectorAll(".mode-btn").forEach(button => {
   button.addEventListener("click", () => setMode(button.dataset.mode));
 });
+
+// =========================================================================
+// Animation Loop
+// =========================================================================
 
 function animate(timeMs) {
   requestAnimationFrame(animate);

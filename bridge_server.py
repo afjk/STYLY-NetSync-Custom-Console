@@ -22,6 +22,7 @@ import random
 import socket
 import threading
 import time
+from typing import Any, TypedDict
 import uuid
 
 MISSING_RUNTIME_DEPENDENCIES: list[str] = []
@@ -79,7 +80,34 @@ WEB_CLIENT_FILENAME = "NetSyncWebClient.html"
 DUMMY_SEND_INTERVAL_SEC = 0.1
 
 
+class NvEntry(TypedDict):
+    """Cached Network Variable entry."""
+
+    value: str
+    timestamp: float
+    lastWriter: int
+
+
+class IdMapping(TypedDict):
+    """Client number to device identifier mapping."""
+
+    clientNo: int
+    deviceId: str
+    stealth: bool
+
+
+class DummyInfo(TypedDict):
+    """UI-facing information about one dummy avatar."""
+
+    index: int
+    deviceId: str
+    x: float
+    z: float
+    hasTarget: bool
+
+
 def ensure_runtime_dependencies():
+    """Exit with a helpful message when runtime packages are missing."""
     if not MISSING_RUNTIME_DEPENDENCIES:
         return
 
@@ -90,7 +118,13 @@ def ensure_runtime_dependencies():
     )
     raise SystemExit(1)
 
+
+# ---------------------------------------------------------------------------
+# Wire Protocol Adapters (upstream camelCase -> WebClient JSON)
+# ---------------------------------------------------------------------------
+
 def _adapt_position(raw: dict | None) -> dict[str, float]:
+    """Adapt an upstream transform position object into WebClient format."""
     raw = raw or {}
     return {
         "x": float(raw.get("posX", 0.0)),
@@ -100,6 +134,7 @@ def _adapt_position(raw: dict | None) -> dict[str, float]:
 
 
 def _adapt_relative_transform(head: dict | None, raw: dict | None) -> dict | None:
+    """Convert an absolute transform into a head-relative WebClient shape."""
     if not head or not raw:
         return None
 
@@ -114,6 +149,7 @@ def _adapt_relative_transform(head: dict | None, raw: dict | None) -> dict | Non
 
 
 def _adapt_room_pose(raw: dict) -> dict:
+    """Adapt an upstream room pose payload into the legacy browser JSON shape."""
     clients = []
     for client in raw.get("clients", []):
         adapted = {
@@ -171,6 +207,7 @@ def _adapt_room_pose(raw: dict) -> dict:
 
 
 def _adapt_rpc(raw: dict) -> dict:
+    """Adapt an upstream RPC payload into the browser JSON shape."""
     arguments_json = raw.get("argumentsJson", "[]")
     try:
         args = json.loads(arguments_json) if arguments_json else []
@@ -186,6 +223,7 @@ def _adapt_rpc(raw: dict) -> dict:
 
 
 def _adapt_id_mapping(raw: dict) -> dict:
+    """Adapt upstream device ID mappings into the browser JSON shape."""
     return {
         "type": "id_mapping",
         "serverVersion": raw.get("serverVersion", "0.0.0"),
@@ -201,6 +239,7 @@ def _adapt_id_mapping(raw: dict) -> dict:
 
 
 def _adapt_global_var_sync(raw: dict) -> dict:
+    """Adapt upstream global variable sync payloads into browser JSON."""
     return {
         "type": "global_var_sync",
         "variables": [
@@ -216,6 +255,7 @@ def _adapt_global_var_sync(raw: dict) -> dict:
 
 
 def _adapt_client_var_sync(raw: dict) -> dict:
+    """Adapt upstream client variable sync payloads into browser JSON."""
     return {
         "type": "client_var_sync",
         "clientVariables": {
@@ -234,6 +274,7 @@ def _adapt_client_var_sync(raw: dict) -> dict:
 
 
 def deserialize_sub_message(topic: bytes, payload: bytes) -> dict | None:
+    """Deserialize one ZeroMQ payload and adapt it for the browser client."""
     del topic
     if not payload:
         return None
@@ -259,7 +300,12 @@ def deserialize_sub_message(topic: bytes, payload: bytes) -> dict | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Serialization Helpers
+# ---------------------------------------------------------------------------
+
 def make_stealth_handshake(device_id: str) -> bytes:
+    """Create a stealth handshake payload using the upstream serializer."""
     tx = create_stealth_transform()
     tx.device_id = device_id
     return serialize_client_transform(client_transform_to_wire(tx))
@@ -271,6 +317,7 @@ def make_rpc(
     sender_client_no: int = 0,
     target_client_nos: list[int] | None = None,
 ) -> bytes:
+    """Create an RPC payload using the upstream serializer."""
     return serialize_rpc_message(
         {
             "senderClientNo": sender_client_no,
@@ -282,6 +329,7 @@ def make_rpc(
 
 
 def make_global_var_set(sender_client_no: int, name: str, value: str) -> bytes:
+    """Create a global variable set payload using the upstream serializer."""
     return serialize_global_var_set(
         {
             "senderClientNo": sender_client_no,
@@ -298,6 +346,7 @@ def make_client_var_set(
     name: str,
     value: str,
 ) -> bytes:
+    """Create a client variable set payload using the upstream serializer."""
     return serialize_client_var_set(
         {
             "senderClientNo": sender_client_no,
@@ -309,7 +358,12 @@ def make_client_var_set(
     )
 
 
+# ---------------------------------------------------------------------------
+# Server Discovery
+# ---------------------------------------------------------------------------
+
 def get_lan_ipv4_candidates() -> list[str]:
+    """Return IPv4 addresses that look reachable on the local network."""
     candidates: set[str] = set()
 
     try:
@@ -336,6 +390,7 @@ def get_lan_ipv4_candidates() -> list[str]:
 
 
 def get_broadcast_addresses(local_ips: list[str]) -> list[str]:
+    """Build likely broadcast addresses from local IPv4 addresses."""
     addresses = {"255.255.255.255"}
 
     for ip in local_ips:
@@ -347,6 +402,7 @@ def get_broadcast_addresses(local_ips: list[str]) -> list[str]:
 
 
 def parse_discovery_response(data: bytes, sender_ip: str) -> dict | None:
+    """Parse one discovery response packet."""
     try:
         message = data.decode("utf-8").strip()
         parts = message.split("|")
@@ -368,6 +424,7 @@ def parse_discovery_response(data: bytes, sender_ip: str) -> dict | None:
 
 
 def try_tcp_discovery(ip_address: str, discovery_port: int, timeout_sec: float) -> dict | None:
+    """Attempt localhost-style TCP discovery against one host."""
     try:
         with socket.create_connection((ip_address, discovery_port), timeout=timeout_sec) as sock:
             sock.settimeout(timeout_sec)
@@ -383,6 +440,7 @@ def try_tcp_discovery(ip_address: str, discovery_port: int, timeout_sec: float) 
 def discover_netsync_server(discovery_port: int = DEFAULT_SERVER_DISCOVERY_PORT,
                             timeout_sec: float = 3.0,
                             interval_sec: float = 0.25) -> dict | None:
+    """Discover a NetSync server via TCP localhost or UDP broadcast."""
     localhost_result = try_tcp_discovery("127.0.0.1", discovery_port, min(timeout_sec, 0.5))
     if localhost_result:
         localhost_result["discoveryMethod"] = "tcp-localhost"
@@ -471,6 +529,8 @@ class QuietWebClientHandler(SimpleHTTPRequestHandler):
 
 
 class WebClientHttpServer:
+    """Serve the local web console over HTTP from the project directory."""
+
     def __init__(self, host: str, port: int, directory: Path) -> None:
         self.host = host
         self.port = port
@@ -507,6 +567,7 @@ class WebClientHttpServer:
 # --- Bridge Core ---
 
 def wrap_angle_rad(angle: float) -> float:
+    """Wrap an angle into the [-pi, pi] range."""
     while angle > math.pi:
         angle -= math.tau
     while angle < -math.pi:
@@ -515,10 +576,25 @@ def wrap_angle_rad(angle: float) -> float:
 
 
 class DummyAvatar:
+    """Simulated avatar that sends transform updates over its own DEALER socket."""
+
+    HAND_LATERAL = 0.24
+    HAND_VERTICAL = -0.34
+    HAND_FORWARD = 0.18
+    SWING_LIFT_FACTOR = 0.15
+    WALK_SWING_AMP = 0.2
+    WALK_SWING_FREQ = 4.0
+    IDLE_SWING_AMP = 0.03
+    IDLE_SWING_FREQ = 0.8
+    BASE_SPEED = 1.4
+    LOCO_OFFSET = 0.09
+    MAX_TURN_RATE = 5.0
+    ARRIVAL_THRESHOLD = 0.1
+
     def __init__(self, bridge: "WebBridge", start_x: float, start_z: float) -> None:
         self.bridge = bridge
         self.device_id = f"dummy-{uuid.uuid4().hex[:12]}"
-        self.socket = bridge.ctx.socket(zmq.DEALER)
+        self.socket: zmq.asyncio.Socket | None = bridge.ctx.socket(zmq.DEALER)
         self.socket.setsockopt(zmq.LINGER, 0)
         self.socket.connect(f"{bridge.server_address}:{bridge.dealer_port}")
         self.pose_seq = 0
@@ -528,7 +604,7 @@ class DummyAvatar:
         self.loco_x = 0.0
         self.loco_z = 0.0
         self.head_yaw_rad = random.uniform(-math.pi, math.pi)
-        self.move_speed = 1.4 * random.uniform(0.85, 1.15)
+        self.move_speed = self.BASE_SPEED * random.uniform(0.85, 1.15)
         self.head_height = random.uniform(1.55, 1.75)
         self.hand_phase = random.uniform(0.0, math.tau)
         self.virtual_orbits = [
@@ -542,22 +618,28 @@ class DummyAvatar:
         ]
 
     def close(self) -> None:
-        self.socket.close()
+        """Close the DEALER socket if it is still open."""
+        if self.socket is not None:
+            self.socket.close()
+            self.socket = None
 
     def set_target(self, x: float, z: float) -> None:
+        """Replace the current path with a single target point."""
         self.targets = [(x, z)]
 
     def add_target(self, x: float, z: float) -> None:
+        """Append a target point to the current path."""
         self.targets.append((x, z))
 
     def update(self, dt: float) -> None:
+        """Advance movement and facing state for one simulation step."""
         moving = False
         if self.targets:
             target_x, target_z = self.targets[0]
             delta_x = target_x - self.phys_x
             delta_z = target_z - self.phys_z
             distance = math.hypot(delta_x, delta_z)
-            if distance < 0.1:
+            if distance < self.ARRIVAL_THRESHOLD:
                 self.phys_x = target_x
                 self.phys_z = target_z
                 self.targets.pop(0)
@@ -565,7 +647,7 @@ class DummyAvatar:
                 moving = True
                 desired_yaw = math.atan2(delta_x, delta_z)
                 yaw_delta = wrap_angle_rad(desired_yaw - self.head_yaw_rad)
-                max_turn = 5.0 * dt
+                max_turn = self.MAX_TURN_RATE * dt
                 self.head_yaw_rad = wrap_angle_rad(
                     self.head_yaw_rad + max(-max_turn, min(max_turn, yaw_delta))
                 )
@@ -580,25 +662,26 @@ class DummyAvatar:
             if math.hypot(delta_x, delta_z) > 1e-4:
                 desired_yaw = math.atan2(delta_x, delta_z)
                 yaw_delta = wrap_angle_rad(desired_yaw - self.head_yaw_rad)
-                max_turn = 5.0 * dt
+                max_turn = self.MAX_TURN_RATE * dt
                 self.head_yaw_rad = wrap_angle_rad(
                     self.head_yaw_rad + max(-max_turn, min(max_turn, yaw_delta))
                 )
 
         forward_x = math.sin(self.head_yaw_rad)
         forward_z = math.cos(self.head_yaw_rad)
-        target_loco_x = forward_x * (0.09 if moving else 0.0)
-        target_loco_z = forward_z * (0.09 if moving else 0.0)
+        target_loco_x = forward_x * (self.LOCO_OFFSET if moving else 0.0)
+        target_loco_z = forward_z * (self.LOCO_OFFSET if moving else 0.0)
         blend = min(1.0, dt * 6.0)
         self.loco_x += (target_loco_x - self.loco_x) * blend
         self.loco_z += (target_loco_z - self.loco_z) * blend
 
     def build_payload(self, now: float) -> bytes:
+        """Build one serialized client transform payload."""
         moving = bool(self.targets)
-        amplitude = 0.2 if moving else 0.03
-        frequency = 4.0 if moving else 0.8
+        amplitude = self.WALK_SWING_AMP if moving else self.IDLE_SWING_AMP
+        frequency = self.WALK_SWING_FREQ if moving else self.IDLE_SWING_FREQ
         swing = amplitude * math.sin((math.tau * frequency * now) + self.hand_phase)
-        lift = abs(swing) * 0.15
+        lift = abs(swing) * self.SWING_LIFT_FACTOR
 
         head_x = self.phys_x + self.loco_x
         head_y = self.head_height
@@ -606,12 +689,12 @@ class DummyAvatar:
         half_yaw = self.head_yaw_rad * 0.5
         head_quat = (0.0, math.sin(half_yaw), 0.0, math.cos(half_yaw))
 
-        right_x = head_x + 0.24
-        right_y = head_y - 0.34 + lift
-        right_z = head_z + 0.18 + swing
-        left_x = head_x - 0.24
-        left_y = head_y - 0.34 + lift
-        left_z = head_z + 0.18 - swing
+        right_x = head_x + self.HAND_LATERAL
+        right_y = head_y + self.HAND_VERTICAL + lift
+        right_z = head_z + self.HAND_FORWARD + swing
+        left_x = head_x - self.HAND_LATERAL
+        left_y = head_y + self.HAND_VERTICAL + lift
+        left_z = head_z + self.HAND_FORWARD - swing
 
         virtuals = []
         for orbit in self.virtual_orbits:
@@ -665,6 +748,8 @@ class DummyAvatar:
 
 
 class DummyAvatarManager:
+    """Manage the dummy avatar pool and its background send loop."""
+
     def __init__(self, bridge: "WebBridge") -> None:
         self.bridge = bridge
         self.avatars: list[DummyAvatar] = []
@@ -672,13 +757,16 @@ class DummyAvatarManager:
 
     @property
     def count(self) -> int:
+        """Return the number of active dummy avatars."""
         return len(self.avatars)
 
     def start(self) -> None:
+        """Start the background send loop if it is not already running."""
         if self._send_task is None or self._send_task.done():
             self._send_task = asyncio.create_task(self._send_loop())
 
     async def stop(self) -> None:
+        """Stop the background send loop and close all dummy avatars."""
         self.despawn_all()
         if self._send_task is not None:
             self._send_task.cancel()
@@ -687,6 +775,7 @@ class DummyAvatarManager:
             self._send_task = None
 
     def spawn(self, count: int, center_x: float, center_z: float, radius: float) -> None:
+        """Spawn dummy avatars in a circle around the given center."""
         count = max(0, int(count))
         if count <= 0:
             return
@@ -704,34 +793,44 @@ class DummyAvatarManager:
             self.avatars.append(DummyAvatar(self.bridge, x, z))
 
     def despawn_all(self) -> None:
+        """Close and remove every dummy avatar."""
         for avatar in self.avatars:
-            avatar.close()
+            try:
+                avatar.close()
+            except Exception:
+                pass
         self.avatars.clear()
 
     def move_all_to(self, tx: float, tz: float) -> None:
+        """Replace the path of every dummy avatar with one target."""
         for avatar in self.avatars:
             avatar.set_target(tx, tz)
 
     def add_waypoint(self, tx: float, tz: float) -> None:
+        """Append one waypoint to every dummy avatar path."""
         for avatar in self.avatars:
             avatar.add_target(tx, tz)
 
     def move_one_to(self, index: int, tx: float, tz: float) -> None:
+        """Replace the path of one dummy avatar with one target."""
         if 0 <= index < len(self.avatars):
             self.avatars[index].set_target(tx, tz)
 
     def add_waypoint_one(self, index: int, tx: float, tz: float) -> None:
+        """Append one waypoint to a single dummy avatar path."""
         if 0 <= index < len(self.avatars):
             self.avatars[index].add_target(tx, tz)
 
     def despawn_one(self, index: int) -> bool:
+        """Remove one dummy avatar by index."""
         if index < 0 or index >= len(self.avatars):
             return False
         avatar = self.avatars.pop(index)
         avatar.close()
         return True
 
-    def _build_dummy_list(self) -> list[dict]:
+    def _build_dummy_list(self) -> list[DummyInfo]:
+        """Build UI-facing dummy avatar metadata."""
         return [
             {
                 "index": i,
@@ -744,6 +843,7 @@ class DummyAvatarManager:
         ]
 
     async def _send_loop(self) -> None:
+        """Send dummy avatar transforms at a fixed interval while running."""
         last_tick = time.monotonic()
         room_bytes = self.bridge.room_id.encode("utf-8")
         while True:
@@ -756,6 +856,8 @@ class DummyAvatarManager:
 
             for avatar in list(self.avatars):
                 avatar.update(dt)
+                if avatar.socket is None:
+                    continue
                 payload = avatar.build_payload(now)
                 try:
                     await avatar.socket.send_multipart([room_bytes, payload])
@@ -763,6 +865,8 @@ class DummyAvatarManager:
                     print(f"[DUMMY] Send error for {avatar.device_id}: {exc}")
 
 class WebBridge:
+    """Bridge between the NetSync ZeroMQ server and browser WebSocket clients."""
+
     def __init__(self, server_address="tcp://localhost",
                  dealer_port=5555, sub_port=5556, room_id="default_room"):
         self.server_address = server_address
@@ -773,16 +877,14 @@ class WebBridge:
         self.discovery_method = None
         self.ws_clients: dict[websockets.WebSocketServerProtocol, str] = {}
         self.ctx = zmq.asyncio.Context()
-
-        # ★ Network Variable キャッシュ
-        self.global_variables: dict[str, dict] = {}       # name -> {value, timestamp, lastWriter}
-        self.client_variables: dict[str, dict[str, dict]] = {}  # clientNo(str) -> {name -> {value, timestamp, lastWriter}}
-        self.id_mappings: list[dict] = []
-        self.room_pose_clients: dict[str, dict] = {}
+        self.global_variables: dict[str, NvEntry] = {}
+        self.client_variables: dict[str, dict[str, NvEntry]] = {}
+        self.id_mappings: list[IdMapping] = []
+        self.room_pose_clients: dict[str, dict[str, Any]] = {}
         self.dummy_manager = DummyAvatarManager(self)
 
-    def _update_nv_cache(self, msg: dict):
-        """SUBメッセージからNVキャッシュを更新"""
+    def _update_nv_cache(self, msg: dict[str, Any]) -> None:
+        """Update the local Network Variable cache from a bridge message."""
         if msg["type"] == "room_pose":
             self.room_pose_clients = {str(client["clientNo"]): client for client in msg.get("clients", [])}
         elif msg["type"] == "global_var_sync":
@@ -805,7 +907,8 @@ class WebBridge:
         elif msg["type"] == "id_mapping":
             self.id_mappings = msg["mappings"]
 
-    def _build_room_summary(self) -> dict:
+    def _build_room_summary(self) -> dict[str, int]:
+        """Build a room summary for status messages and snapshots."""
         mapped_clients = [m for m in self.id_mappings if not m.get("stealth")]
         stealth_clients = [m for m in self.id_mappings if m.get("stealth")]
         return {
@@ -817,7 +920,7 @@ class WebBridge:
         }
 
     def _build_snapshot(self) -> str:
-        """現在のNV状態をまとめたJSONを返す"""
+        """Build a full JSON snapshot for a newly connected browser client."""
         return json.dumps({
             "type": "nv_snapshot",
             "globalVariables": self.global_variables,
@@ -829,6 +932,7 @@ class WebBridge:
         })
 
     def _build_bridge_status(self) -> str:
+        """Build a bridge status payload for browser clients."""
         return json.dumps({
             "type": "bridge_status",
             "roomSummary": self._build_room_summary(),
@@ -842,7 +946,8 @@ class WebBridge:
             }
         })
 
-    def configure_discovered_server(self, discovered: dict):
+    def configure_discovered_server(self, discovered: dict[str, Any]) -> None:
+        """Apply discovery results to the active bridge configuration."""
         self.server_address = discovered["serverAddress"]
         self.dealer_port = discovered["dealerPort"]
         self.sub_port = discovered["subPort"]
@@ -852,7 +957,8 @@ class WebBridge:
     def ensure_server_endpoint(self,
                                discover: bool = False,
                                discovery_port: int = DEFAULT_SERVER_DISCOVERY_PORT,
-                               discovery_timeout: float = 3.0):
+                               discovery_timeout: float = 3.0) -> None:
+        """Resolve the NetSync server endpoint, optionally using discovery."""
         should_discover = discover or not self.server_address or self.server_address in {"auto", "discover"}
         if not should_discover:
             print(
@@ -878,53 +984,37 @@ class WebBridge:
             f"(dealer:{self.dealer_port}, sub:{self.sub_port}, via {self.discovery_method})"
         )
 
-    async def _broadcast_bridge_status(self):
+    async def _broadcast_to_all(self, message: str) -> None:
+        """Send a JSON string to all connected WebSocket clients."""
         if not self.ws_clients:
             return
-
-        json_str = self._build_bridge_status()
         disconnected = []
-        for ws in list(self.ws_clients.keys()):
+        for ws in list(self.ws_clients):
             try:
-                await ws.send(json_str)
+                await ws.send(message)
             except websockets.ConnectionClosed:
                 disconnected.append(ws)
         for ws in disconnected:
-            del self.ws_clients[ws]
+            self.ws_clients.pop(ws, None)
 
-    async def _broadcast_dummy_status(self):
-        if not self.ws_clients:
-            return
+    async def _broadcast_bridge_status(self) -> None:
+        """Broadcast current bridge status to all browser clients."""
+        await self._broadcast_to_all(self._build_bridge_status())
 
-        json_str = json.dumps({"type": "dummy_status", "count": self.dummy_manager.count})
-        disconnected = []
-        for ws in list(self.ws_clients.keys()):
-            try:
-                await ws.send(json_str)
-            except websockets.ConnectionClosed:
-                disconnected.append(ws)
-        for ws in disconnected:
-            del self.ws_clients[ws]
+    async def _broadcast_dummy_status(self) -> None:
+        """Broadcast the current dummy count to all browser clients."""
+        await self._broadcast_to_all(json.dumps({"type": "dummy_status", "count": self.dummy_manager.count}))
 
-    async def _broadcast_dummy_list(self):
-        if not self.ws_clients:
-            return
-
-        json_str = json.dumps({
+    async def _broadcast_dummy_list(self) -> None:
+        """Broadcast the current dummy list to all browser clients."""
+        await self._broadcast_to_all(json.dumps({
             "type": "dummy_list",
             "dummies": self.dummy_manager._build_dummy_list(),
             "count": self.dummy_manager.count,
-        })
-        disconnected = []
-        for ws in list(self.ws_clients.keys()):
-            try:
-                await ws.send(json_str)
-            except websockets.ConnectionClosed:
-                disconnected.append(ws)
-        for ws in disconnected:
-            del self.ws_clients[ws]
+        }))
 
-    async def zmq_subscriber(self):
+    async def zmq_subscriber(self) -> None:
+        """Subscribe to room broadcasts and relay adapted JSON to browsers."""
         sub = self.ctx.socket(zmq.SUB)
         sub.connect(f"{self.server_address}:{self.sub_port}")
         sub.subscribe(self.room_id.encode("utf-8"))
@@ -937,24 +1027,15 @@ class WebBridge:
                     topic, payload = parts[0], parts[1]
                     msg = deserialize_sub_message(topic, payload)
                     if msg:
-                        # ★ NVキャッシュを更新
                         self._update_nv_cache(msg)
-
-                        json_str = json.dumps(msg)
-                        disconnected = []
-                        for ws in list(self.ws_clients.keys()):
-                            try:
-                                await ws.send(json_str)
-                            except websockets.ConnectionClosed:
-                                disconnected.append(ws)
-                        for ws in disconnected:
-                            del self.ws_clients[ws]
+                        await self._broadcast_to_all(json.dumps(msg))
             except Exception as e:
                 print(f"[SUB] Error: {e}")
                 await asyncio.sleep(0.1)
 
-    async def zmq_dealer_receiver(self, dealer, ws, device_id):
-        """DEALER→ROUTER経由で受信するコントロールメッセージを処理"""
+    async def zmq_dealer_receiver(self, dealer, ws, device_id) -> None:
+        """Relay control messages received on a DEALER socket back to one browser."""
+        del device_id
         while ws in self.ws_clients:
             try:
                 parts = await dealer.recv_multipart(flags=zmq.NOBLOCK)
@@ -970,7 +1051,102 @@ class WebBridge:
                 print(f"[DEALER-RX] Error: {e}")
                 await asyncio.sleep(0.1)
 
-    async def handle_ws_client(self, ws):
+    async def _dispatch_action(self, msg: dict[str, Any], dealer, room: bytes, ws) -> None:
+        """Dispatch one browser action to its corresponding handler."""
+        action = msg.get("action")
+        method = getattr(self, f"_on_{action}", None)
+        if method is not None:
+            await method(msg, dealer, room, ws)
+
+    async def _on_rpc(self, msg: dict[str, Any], dealer, room: bytes, ws) -> None:
+        """Send an RPC message to the NetSync server."""
+        del ws
+        payload = make_rpc(
+            msg["functionName"],
+            msg.get("args", []),
+            msg.get("senderClientNo", 0),
+            msg.get("targetClientNos"),
+        )
+        await dealer.send_multipart([room, payload])
+
+    async def _on_set_global_var(self, msg: dict[str, Any], dealer, room: bytes, ws) -> None:
+        """Send a global variable update to the NetSync server."""
+        del ws
+        payload = make_global_var_set(msg.get("senderClientNo", 0), msg["name"], msg["value"])
+        await dealer.send_multipart([room, payload])
+
+    async def _on_set_client_var(self, msg: dict[str, Any], dealer, room: bytes, ws) -> None:
+        """Send a client variable update to the NetSync server."""
+        del ws
+        payload = make_client_var_set(
+            msg.get("senderClientNo", 0),
+            msg["targetClientNo"],
+            msg["name"],
+            msg["value"],
+        )
+        await dealer.send_multipart([room, payload])
+
+    async def _on_get_snapshot(self, msg: dict[str, Any], dealer, room: bytes, ws) -> None:
+        """Send the current cached snapshot back to one browser client."""
+        del msg, dealer, room
+        await ws.send(self._build_snapshot())
+
+    async def _on_spawn_dummies(self, msg: dict[str, Any], dealer, room: bytes, ws) -> None:
+        """Spawn dummy avatars and broadcast the updated dummy state."""
+        del dealer, room, ws
+        self.dummy_manager.spawn(
+            int(msg.get("count", 0)),
+            float(msg.get("centerX", 0.0)),
+            float(msg.get("centerZ", 0.0)),
+            float(msg.get("radius", 0.0)),
+        )
+        await self._broadcast_dummy_status()
+        await self._broadcast_dummy_list()
+
+    async def _on_despawn_dummies(self, msg: dict[str, Any], dealer, room: bytes, ws) -> None:
+        """Remove all dummy avatars and broadcast the updated dummy state."""
+        del msg, dealer, room, ws
+        self.dummy_manager.despawn_all()
+        await self._broadcast_dummy_status()
+        await self._broadcast_dummy_list()
+
+    async def _on_move_dummies_to(self, msg: dict[str, Any], dealer, room: bytes, ws) -> None:
+        """Move all dummy avatars to one target position."""
+        del dealer, room, ws
+        self.dummy_manager.move_all_to(float(msg.get("x", 0.0)), float(msg.get("z", 0.0)))
+
+    async def _on_add_waypoint(self, msg: dict[str, Any], dealer, room: bytes, ws) -> None:
+        """Append one waypoint to all dummy avatars."""
+        del dealer, room, ws
+        self.dummy_manager.add_waypoint(float(msg.get("x", 0.0)), float(msg.get("z", 0.0)))
+
+    async def _on_move_one_to(self, msg: dict[str, Any], dealer, room: bytes, ws) -> None:
+        """Move one dummy avatar to one target position."""
+        del dealer, room, ws
+        self.dummy_manager.move_one_to(
+            int(msg.get("index", -1)),
+            float(msg.get("x", 0.0)),
+            float(msg.get("z", 0.0)),
+        )
+
+    async def _on_add_waypoint_one(self, msg: dict[str, Any], dealer, room: bytes, ws) -> None:
+        """Append one waypoint to a single dummy avatar."""
+        del dealer, room, ws
+        self.dummy_manager.add_waypoint_one(
+            int(msg.get("index", -1)),
+            float(msg.get("x", 0.0)),
+            float(msg.get("z", 0.0)),
+        )
+
+    async def _on_despawn_one(self, msg: dict[str, Any], dealer, room: bytes, ws) -> None:
+        """Remove one dummy avatar and broadcast the updated dummy state."""
+        del dealer, room, ws
+        self.dummy_manager.despawn_one(int(msg.get("index", -1)))
+        await self._broadcast_dummy_status()
+        await self._broadcast_dummy_list()
+
+    async def handle_ws_client(self, ws) -> None:
+        """Serve one browser WebSocket connection."""
         device_id = f"web-{uuid.uuid4().hex[:12]}"
         self.ws_clients[ws] = device_id
         print(f"[WS] Client connected: {device_id}")
@@ -984,7 +1160,6 @@ class WebBridge:
         await dealer.send_multipart([self.room_id.encode("utf-8"), handshake])
         print(f"[DEALER] Sent stealth handshake for {device_id}")
 
-        # ★ 接続時に現在のNVスナップショットを送信
         await ws.send(self._build_snapshot())
 
         async def keepalive():
@@ -1001,77 +1176,18 @@ class WebBridge:
 
         try:
             async for raw_msg in ws:
-                msg = json.loads(raw_msg)
-                action = msg.get("action")
+                try:
+                    msg = json.loads(raw_msg)
+                except json.JSONDecodeError:
+                    print("[WS] Ignored invalid JSON payload")
+                    continue
                 room = self.room_id.encode("utf-8")
-
-                if action == "rpc":
-                    payload = make_rpc(
-                        msg["functionName"],
-                        msg.get("args", []),
-                        msg.get("senderClientNo", 0),
-                        msg.get("targetClientNos")
-                    )
-                    await dealer.send_multipart([room, payload])
-
-                elif action == "set_global_var":
-                    payload = make_global_var_set(
-                        msg.get("senderClientNo", 0),
-                        msg["name"], msg["value"]
-                    )
-                    await dealer.send_multipart([room, payload])
-
-                elif action == "set_client_var":
-                    payload = make_client_var_set(
-                        msg.get("senderClientNo", 0),
-                        msg["targetClientNo"],
-                        msg["name"], msg["value"]
-                    )
-                    await dealer.send_multipart([room, payload])
-
-                elif action == "get_snapshot":
-                    # ★ クライアントからのスナップショットリクエスト
-                    await ws.send(self._build_snapshot())
-
-                elif action == "spawn_dummies":
-                    self.dummy_manager.spawn(
-                        int(msg.get("count", 0)),
-                        float(msg.get("centerX", 0.0)),
-                        float(msg.get("centerZ", 0.0)),
-                        float(msg.get("radius", 0.0)),
-                    )
-                    await self._broadcast_dummy_status()
-                    await self._broadcast_dummy_list()
-
-                elif action == "despawn_dummies":
-                    self.dummy_manager.despawn_all()
-                    await self._broadcast_dummy_status()
-                    await self._broadcast_dummy_list()
-
-                elif action == "move_dummies_to":
-                    self.dummy_manager.move_all_to(float(msg.get("x", 0.0)), float(msg.get("z", 0.0)))
-
-                elif action == "add_waypoint":
-                    self.dummy_manager.add_waypoint(float(msg.get("x", 0.0)), float(msg.get("z", 0.0)))
-
-                elif action == "move_one_to":
-                    self.dummy_manager.move_one_to(
-                        int(msg.get("index", -1)),
-                        float(msg.get("x", 0.0)),
-                        float(msg.get("z", 0.0)),
-                    )
-
-                elif action == "add_waypoint_one":
-                    self.dummy_manager.add_waypoint_one(
-                        int(msg.get("index", -1)),
-                        float(msg.get("x", 0.0)),
-                        float(msg.get("z", 0.0)),
-                    )
-
-                elif action == "despawn_one":
-                    self.dummy_manager.despawn_one(int(msg.get("index", -1)))
-                    await self._broadcast_dummy_status()
-                    await self._broadcast_dummy_list()
+                try:
+                    await self._dispatch_action(msg, dealer, room, ws)
+                except KeyError as exc:
+                    print(f"[WS] Missing field in '{msg.get('action')}': {exc}")
+                except (TypeError, ValueError) as exc:
+                    print(f"[WS] Invalid value in '{msg.get('action')}': {exc}")
 
         except websockets.ConnectionClosed:
             pass
@@ -1090,7 +1206,8 @@ class WebBridge:
                   discovery_timeout=3.0,
                   http_host="0.0.0.0",
                   http_port=DEFAULT_HTTP_PORT,
-                  http_enabled=True):
+                  http_enabled=True) -> None:
+        """Start the HTTP helper, the ZeroMQ subscriber, and the WS server."""
         self.ensure_server_endpoint(
             discover=discover,
             discovery_port=discovery_port,
@@ -1120,7 +1237,6 @@ class WebBridge:
                     print(f"  - {url}")
         else:
             print(f"[Bridge] Reachable URL: ws://{ws_host}:{ws_port}")
-        self.dummy_manager.start()
         asyncio.create_task(self.zmq_subscriber())
         try:
             async with websockets.serve(self.handle_ws_client, ws_host, ws_port):
