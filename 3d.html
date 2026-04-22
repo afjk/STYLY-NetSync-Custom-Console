@@ -226,14 +226,20 @@ const dragPoint = new THREE.Vector3();
 
 let ws = null;
 let dragActive = false;
+let dragMode = null;
+let dragDummyIndex = null;
+let dragCandidate = null;
 let currentMode = "virtual";
 let dummyCount = 0;
 let lastHandleSendAt = 0;
+let suppressClickUntil = 0;
 const avatars = new Map();
 const logEntries = [];
 let idMappings = {};
 let dummies = [];
 let selectedDummyIndex = null;
+const BRIDGE_URL_STORAGE_KEY = "styly-netsync-bridge-url";
+const BRIDGE_AUTO_CONNECT_KEY = "styly-netsync-bridge-auto-connect";
 
 function unityToViewPosition(x, y, z) {
   return { x, y, z: -z };
@@ -244,6 +250,8 @@ function viewToUnityPosition(x, y, z) {
 }
 
 function defaultWsUrl() {
+  const savedUrl = (localStorage.getItem(BRIDGE_URL_STORAGE_KEY) || "").trim();
+  if (savedUrl) return savedUrl;
   if (location.hostname && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
     return `ws://${location.hostname}:8765`;
   }
@@ -566,6 +574,8 @@ function handleMessage(msg) {
 
 function connect() {
   const url = (document.getElementById("ws-url").value || "").trim() || defaultWsUrl();
+  localStorage.setItem(BRIDGE_URL_STORAGE_KEY, url);
+  localStorage.setItem(BRIDGE_AUTO_CONNECT_KEY, "1");
   if (ws && ws.readyState <= 1) ws.close();
   ws = new WebSocket(url);
   setStatus("Connecting");
@@ -580,6 +590,11 @@ function connect() {
   };
   ws.onerror = () => addLog("socket error");
   ws.onmessage = event => handleMessage(JSON.parse(event.data));
+}
+
+function disconnect() {
+  localStorage.setItem(BRIDGE_AUTO_CONNECT_KEY, "0");
+  if (ws) ws.close();
 }
 
 function openConsole() {
@@ -600,7 +615,7 @@ function getGroundPoint(event) {
     : null;
 }
 
-function sendGroundTarget(point, additive = false) {
+function sendGroundTarget(point, additive = false, log = true) {
   handleGroup.position.set(point.x, 0, point.z);
   const unityTarget = viewToUnityPosition(point.x, 0, point.z);
   const payload = {
@@ -612,44 +627,13 @@ function sendGroundTarget(point, additive = false) {
   };
   if (selectedDummyIndex != null) payload.index = selectedDummyIndex;
   if (!sendJson(payload)) return false;
-  addLog(`${additive ? "waypoint" : "move"} target ${unityTarget.x.toFixed(2)}, ${unityTarget.z.toFixed(2)}`);
+  if (log) {
+    addLog(`${additive ? "waypoint" : "move"} target ${unityTarget.x.toFixed(2)}, ${unityTarget.z.toFixed(2)}`);
+  }
   return true;
 }
 
-canvas.addEventListener("pointerdown", event => {
-  updatePointer(event);
-  raycaster.setFromCamera(pointer, camera);
-  const hit = raycaster.intersectObject(handleMesh, false)[0];
-  if (!hit) return;
-  dragActive = true;
-  controls.enabled = false;
-  canvas.setPointerCapture(event.pointerId);
-});
-
-canvas.addEventListener("pointermove", event => {
-  if (!dragActive) return;
-  updatePointer(event);
-  raycaster.setFromCamera(pointer, camera);
-  if (raycaster.ray.intersectPlane(dragPlane, dragPoint)) {
-    handleGroup.position.set(dragPoint.x, 0, dragPoint.z);
-    const now = performance.now();
-    if (now - lastHandleSendAt >= 1000 / 30) {
-      lastHandleSendAt = now;
-      sendHandleTarget(false);
-    }
-  }
-});
-
-canvas.addEventListener("pointerup", event => {
-  if (!dragActive) return;
-  dragActive = false;
-  controls.enabled = true;
-  canvas.releasePointerCapture(event.pointerId);
-  sendHandleTarget(true);
-});
-
-canvas.addEventListener("click", event => {
-  if (dragActive) return;
+function getDummyHitFromEvent(event) {
   updatePointer(event);
   raycaster.setFromCamera(pointer, camera);
   const hits = raycaster.intersectObjects(scene.children, true);
@@ -661,15 +645,105 @@ canvas.addEventListener("click", event => {
     }
     return false;
   });
+  if (!hit) return null;
+  let current = hit.object;
+  while (current && current.userData?.clientNo == null) current = current.parent;
+  const clientNo = current?.userData?.clientNo;
+  const dummyIndex = clientNo != null ? getDummyIndexByClientNo(clientNo) : null;
+  return dummyIndex != null ? { clientNo, dummyIndex } : null;
+}
+
+function beginDrag(kind, event, dummyIndex = null) {
+  dragActive = true;
+  dragMode = kind;
+  dragDummyIndex = dummyIndex;
+  controls.enabled = false;
+  canvas.setPointerCapture(event.pointerId);
+  if (dummyIndex != null) {
+    selectedDummyIndex = dummyIndex;
+    updateSelectionUi();
+  }
+}
+
+canvas.addEventListener("pointerdown", event => {
+  updatePointer(event);
+  raycaster.setFromCamera(pointer, camera);
+  const hit = raycaster.intersectObject(handleMesh, false)[0];
   if (hit) {
-    let current = hit.object;
-    while (current && current.userData?.clientNo == null) current = current.parent;
-    const clientNo = current?.userData?.clientNo;
-    const dummyIndex = clientNo != null ? getDummyIndexByClientNo(clientNo) : null;
-    if (dummyIndex != null) {
-      setSelectedDummy(dummyIndex);
-      return;
+    dragCandidate = { kind: "handle", pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, dummyIndex: null };
+    return;
+  }
+  const dummyHit = getDummyHitFromEvent(event);
+  if (!dummyHit) return;
+  dragCandidate = {
+    kind: "avatar",
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    dummyIndex: dummyHit.dummyIndex
+  };
+});
+
+canvas.addEventListener("pointermove", event => {
+  if (!dragActive && dragCandidate && dragCandidate.pointerId === event.pointerId) {
+    const distance = Math.hypot(event.clientX - dragCandidate.startX, event.clientY - dragCandidate.startY);
+    if (distance >= 6) {
+      beginDrag(dragCandidate.kind, event, dragCandidate.dummyIndex);
+      dragCandidate = null;
     }
+  }
+  if (!dragActive) return;
+  updatePointer(event);
+  raycaster.setFromCamera(pointer, camera);
+  if (raycaster.ray.intersectPlane(dragPlane, dragPoint)) {
+    handleGroup.position.set(dragPoint.x, 0, dragPoint.z);
+    const now = performance.now();
+    if (now - lastHandleSendAt >= 1000 / 30) {
+      lastHandleSendAt = now;
+      if (dragMode === "avatar" && dragDummyIndex != null) {
+        const previousSelected = selectedDummyIndex;
+        selectedDummyIndex = dragDummyIndex;
+        sendGroundTarget(dragPoint, false, false);
+        selectedDummyIndex = previousSelected;
+      } else {
+        sendHandleTarget(false);
+      }
+    }
+  }
+});
+
+canvas.addEventListener("pointerup", event => {
+  if (!dragActive) {
+    if (dragCandidate?.pointerId === event.pointerId) {
+      dragCandidate = null;
+    }
+    return;
+  }
+  dragActive = false;
+  suppressClickUntil = performance.now() + 250;
+  controls.enabled = true;
+  canvas.releasePointerCapture(event.pointerId);
+  const point = getGroundPoint(event);
+  if (dragMode === "avatar" && dragDummyIndex != null && point) {
+    const previousSelected = selectedDummyIndex;
+    selectedDummyIndex = dragDummyIndex;
+    sendGroundTarget(point, false);
+    selectedDummyIndex = previousSelected;
+  } else {
+    sendHandleTarget(true);
+  }
+  dragMode = null;
+  dragDummyIndex = null;
+  dragCandidate = null;
+});
+
+canvas.addEventListener("click", event => {
+  if (performance.now() < suppressClickUntil) return;
+  if (dragActive) return;
+  const dummyHit = getDummyHitFromEvent(event);
+  if (dummyHit) {
+    setSelectedDummy(dummyHit.dummyIndex);
+    return;
   }
 
   const point = getGroundPoint(event);
@@ -709,6 +783,11 @@ window.addEventListener("resize", () => {
 
 document.getElementById("ws-url").value = defaultWsUrl();
 document.getElementById("connect-btn").addEventListener("click", connect);
+window.addEventListener("pageshow", () => {
+  if (localStorage.getItem(BRIDGE_AUTO_CONNECT_KEY) === "1" && (!ws || ws.readyState > 1)) {
+    connect();
+  }
+});
 document.getElementById("open-console-btn").addEventListener("click", openConsole);
 document.getElementById("spawn-btn").addEventListener("click", () => spawnDummies());
 document.getElementById("spawn-50-btn").addEventListener("click", () => spawnDummies(50));
@@ -737,6 +816,9 @@ function animate(timeMs) {
 setStatus("Disconnected");
 updateSelectionUi();
 addLog("viewer ready");
+if (localStorage.getItem(BRIDGE_AUTO_CONNECT_KEY) === "1") {
+  connect();
+}
 requestAnimationFrame(animate);
 </script>
 </body>

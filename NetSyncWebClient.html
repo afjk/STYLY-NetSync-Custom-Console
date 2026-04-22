@@ -597,6 +597,7 @@ let spawnPreviewWorld = null;
 
 const BRIDGE_URL_STORAGE_KEY = "styly-netsync-bridge-url";
 const BRIDGE_URL_HISTORY_KEY = "styly-netsync-bridge-url-history";
+const BRIDGE_AUTO_CONNECT_KEY = "styly-netsync-bridge-auto-connect";
 const WATCHED_CLIENT_VARS_STORAGE_KEY = "styly-netsync-watched-client-vars";
 const MAX_BRIDGE_URL_HISTORY = 8;
 const BRIDGE_START_GUIDE_URL = "https://github.com/afjk/STYLY-NetSync-Custom-Console/blob/main/README.ja.md#%E8%B5%B7%E5%8B%95";
@@ -710,6 +711,9 @@ function initializeBridgeUrlUi() {
     }
   });
   renderBridgeUrlCandidates();
+  if (localStorage.getItem(BRIDGE_AUTO_CONNECT_KEY) === "1") {
+    connect();
+  }
 }
 
 function loadWatchedClientVars() {
@@ -800,6 +804,7 @@ function connect() {
   }
 
   document.getElementById("ws-url").value = saveBridgeUrlToHistory(url);
+  localStorage.setItem(BRIDGE_AUTO_CONNECT_KEY, "1");
   if (ws && ws.readyState <= 1) ws.close();
   ws = new WebSocket(url);
   ws.onopen = () => {
@@ -817,6 +822,7 @@ function connect() {
 }
 
 function disconnect() {
+  localStorage.setItem(BRIDGE_AUTO_CONNECT_KEY, "0");
   if (ws) ws.close();
 }
 
