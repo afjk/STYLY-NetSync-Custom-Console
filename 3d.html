@@ -145,6 +145,22 @@ controls.maxPolarAngle = THREE.MathUtils.degToRad(86);
 controls.minDistance = 3;
 controls.maxDistance = 60;
 controls.target.set(0, 1.2, 0);
+controls.addEventListener("start", () => {
+  if (!controls.enabled) return;
+  controlsInteractionActive = true;
+  controlsMoved = false;
+});
+controls.addEventListener("change", () => {
+  if (!controlsInteractionActive || !controls.enabled) return;
+  controlsMoved = true;
+});
+controls.addEventListener("end", () => {
+  if (controlsInteractionActive && controlsMoved) {
+    suppressClickUntil = performance.now() + 250;
+  }
+  controlsInteractionActive = false;
+  controlsMoved = false;
+});
 
 scene.add(new THREE.AmbientLight(0x8f98ab, 1.05));
 
@@ -237,6 +253,8 @@ let currentMode = "virtual";
 let dummyCount = 0;
 let lastHandleSendAt = 0;
 let suppressClickUntil = 0;
+let controlsInteractionActive = false;
+let controlsMoved = false;
 const avatars = new Map();
 const logEntries = [];
 let idMappings = {};
@@ -700,6 +718,8 @@ function beginDrag(kind, event, dummyIndex = null) {
   dragActive = true;
   dragMode = kind;
   dragDummyIndex = dummyIndex;
+  controlsInteractionActive = false;
+  controlsMoved = false;
   controls.enabled = false;
   canvas.setPointerCapture(event.pointerId);
   if (dummyIndex != null) {
@@ -782,6 +802,19 @@ canvas.addEventListener("pointerup", event => {
   dragMode = null;
   dragDummyIndex = null;
   dragCandidate = null;
+});
+
+canvas.addEventListener("pointercancel", event => {
+  if (dragCandidate?.pointerId === event.pointerId) {
+    dragCandidate = null;
+  }
+  controlsInteractionActive = false;
+  controlsMoved = false;
+  if (!dragActive) return;
+  dragActive = false;
+  controls.enabled = true;
+  dragMode = null;
+  dragDummyIndex = null;
 });
 
 canvas.addEventListener("click", event => {
