@@ -4,7 +4,7 @@
 # dependencies = [
 #   "pyzmq",
 #   "websockets",
-#   "styly-netsync-server>=0.10.3",
+#   "styly-netsync-server>=0.11.0",
 # ]
 # ///
 #
@@ -46,12 +46,21 @@ try:
         MSG_CLIENT_VAR_SYNC,
         MSG_DEVICE_ID_MAPPING,
         MSG_GLOBAL_VAR_SYNC,
+        MSG_OBJECT_OWNERSHIP_CHANGED,
+        MSG_OBJECT_OWNERSHIP_REJECTED,
+        MSG_ROOM_OBJECTS,
         MSG_ROOM_POSE,
         MSG_RPC,
+        POSE_FLAG_HEAD_VALID,
+        POSE_FLAG_LEFT_VALID,
+        POSE_FLAG_PHYSICAL_VALID,
+        POSE_FLAG_RIGHT_VALID,
+        POSE_FLAG_VIRTUALS_VALID,
         deserialize,
         serialize_client_transform,
         serialize_client_var_set,
         serialize_global_var_set,
+        serialize_object_pose,
         serialize_rpc_message,
     )
     from styly_netsync.types import client_transform_data, transform_data
@@ -62,16 +71,17 @@ except ModuleNotFoundError:
     serialize_client_transform = None
     serialize_client_var_set = None
     serialize_global_var_set = None
+    serialize_object_pose = None
     serialize_rpc_message = None
     client_transform_data = None
     transform_data = None
+    POSE_FLAG_PHYSICAL_VALID = 1 << 1
+    POSE_FLAG_HEAD_VALID = 1 << 2
+    POSE_FLAG_RIGHT_VALID = 1 << 3
+    POSE_FLAG_LEFT_VALID = 1 << 4
+    POSE_FLAG_VIRTUALS_VALID = 1 << 5
     MISSING_RUNTIME_DEPENDENCIES.append("styly-netsync-server")
 
-POSE_FLAG_PHYSICAL_VALID = 1 << 1
-POSE_FLAG_HEAD_VALID = 1 << 2
-POSE_FLAG_RIGHT_VALID = 1 << 3
-POSE_FLAG_LEFT_VALID = 1 << 4
-POSE_FLAG_VIRTUALS_VALID = 1 << 5
 DISCOVERY_REQUEST = "STYLY-NETSYNC-DISCOVER"
 DISCOVERY_RESPONSE_PREFIX = "STYLY-NETSYNC"
 DEFAULT_SERVER_DISCOVERY_PORT = 9999
@@ -273,6 +283,54 @@ def _adapt_client_var_sync(raw: dict) -> dict:
     }
 
 
+def _adapt_room_objects(raw: dict) -> dict:
+    """Adapt upstream room objects broadcast into browser JSON shape."""
+    return {
+        "type": "room_objects",
+        "broadcastTime": raw.get("broadcastTime", 0.0),
+        "objects": [
+            {
+                "objectId": obj.get("objectId"),
+                "ownerClientNo": obj.get("ownerClientNo"),
+                "poseSeq": obj.get("poseSeq"),
+                "poseTime": obj.get("poseTime"),
+                "pos": {
+                    "x": obj.get("posX", 0.0),
+                    "y": obj.get("posY", 0.0),
+                    "z": obj.get("posZ", 0.0),
+                },
+                "rot": {
+                    "x": obj.get("rotX", 0.0),
+                    "y": obj.get("rotY", 0.0),
+                    "z": obj.get("rotZ", 0.0),
+                    "w": obj.get("rotW", 1.0),
+                },
+            }
+            for obj in raw.get("objects", [])
+        ],
+    }
+
+
+def _adapt_object_ownership_changed(raw: dict) -> dict:
+    """Adapt upstream object ownership changed notification into browser JSON shape."""
+    return {
+        "type": "object_ownership_changed",
+        "objectId": raw.get("objectId"),
+        "newOwnerClientNo": raw.get("newOwnerClientNo"),
+        "previousOwnerClientNo": raw.get("previousOwnerClientNo"),
+    }
+
+
+def _adapt_object_ownership_rejected(raw: dict) -> dict:
+    """Adapt upstream object ownership rejected notification into browser JSON shape."""
+    return {
+        "type": "object_ownership_rejected",
+        "objectId": raw.get("objectId"),
+        "currentOwnerClientNo": raw.get("currentOwnerClientNo"),
+        "reasonCode": raw.get("reasonCode"),
+    }
+
+
 def deserialize_sub_message(topic: bytes, payload: bytes) -> dict | None:
     """Deserialize one ZeroMQ payload and adapt it for the browser client."""
     del topic
@@ -297,6 +355,12 @@ def deserialize_sub_message(topic: bytes, payload: bytes) -> dict | None:
         return _adapt_global_var_sync(data)
     if msg_type == MSG_CLIENT_VAR_SYNC:
         return _adapt_client_var_sync(data)
+    if msg_type == MSG_ROOM_OBJECTS:
+        return _adapt_room_objects(data)
+    if msg_type == MSG_OBJECT_OWNERSHIP_CHANGED:
+        return _adapt_object_ownership_changed(data)
+    if msg_type == MSG_OBJECT_OWNERSHIP_REJECTED:
+        return _adapt_object_ownership_rejected(data)
     return None
 
 
@@ -1137,6 +1201,12 @@ class WebBridge:
             float(msg.get("x", 0.0)),
             float(msg.get("z", 0.0)),
         )
+
+    async def _on_object_pose(self, msg: dict[str, Any], dealer, room: bytes, ws) -> None:
+        """Send an object pose update to the NetSync server."""
+        del ws
+        payload = serialize_object_pose(msg)
+        await dealer.send_multipart([room, payload])
 
     async def _on_despawn_one(self, msg: dict[str, Any], dealer, room: bytes, ws) -> None:
         """Remove one dummy avatar and broadcast the updated dummy state."""

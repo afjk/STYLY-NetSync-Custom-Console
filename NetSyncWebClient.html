@@ -1558,10 +1558,18 @@ function renderDetail() {
       <div class="editor-row">
         <input type="text" id="rpc-func" placeholder="function">
         <input type="text" id="rpc-args" placeholder="args">
-        <button onclick="sendRpc(${Number(cno)})">RPC</button>
+        <button onclick="sendRpc()">RPC</button>
       </div>
     </div>`;
+  const prevRpcFunc = document.getElementById("rpc-func")?.value || "";
+  const prevRpcArgs = document.getElementById("rpc-args")?.value || "";
+  const prevCvName = document.getElementById("set-cv-name")?.value || "";
+  const prevCvValue = document.getElementById("set-cv-value")?.value || "";
   el.innerHTML = html;
+  if (prevRpcFunc) document.getElementById("rpc-func").value = prevRpcFunc;
+  if (prevRpcArgs) document.getElementById("rpc-args").value = prevRpcArgs;
+  if (prevCvName) document.getElementById("set-cv-name").value = prevCvName;
+  if (prevCvValue) document.getElementById("set-cv-value").value = prevCvValue;
 }
 
 function detailKv(key, value) {
@@ -1677,7 +1685,7 @@ function handleMessage(msg) {
   if (handler) handler(msg);
 }
 
-function sendRpc(targetClientNo) {
+function sendRpc() {
   if (!ws || ws.readyState !== 1) {
     toast("Not connected", true);
     return;
@@ -1690,7 +1698,6 @@ function sendRpc(targetClientNo) {
   }
   const args = rawArgs ? rawArgs.split(",").map(s => s.trim()) : [];
   const msg = { action: "rpc", functionName: func, args };
-  if (targetClientNo) msg.targetClientNos = [targetClientNo];
   ws.send(JSON.stringify(msg));
   toast("RPC sent");
 }
