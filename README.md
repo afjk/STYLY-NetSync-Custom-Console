@@ -127,6 +127,12 @@ Disable HTTP serving if you only want the WebSocket bridge:
 ./start_bridge_server.sh --no-http
 ```
 
+If the NetSync Server REST API uses a non-default port, pass it to the bridge. This is used when clearing all Client Network Variables for a selected client from the console:
+
+```bash
+./start_bridge_server.sh --rest-api-port 8800
+```
+
 ## Console Features
 
 - live participant grid
@@ -135,6 +141,7 @@ Disable HTTP serving if you only want the WebSocket bridge:
 - pose activity display
 - global Network Variable display and set
 - client Network Variable display and set
+- clear all Client Network Variables for a selected client
 - RPC send from selected client detail
 - simple top-down map view with auto scaling
 - dummy avatar spawn / despawn controls

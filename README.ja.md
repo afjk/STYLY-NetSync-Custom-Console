@@ -129,6 +129,12 @@ HTTP 配信を無効にして WebSocket bridge だけ起動する場合:
 ./start_bridge_server.sh --no-http
 ```
 
+NetSync Server の REST API port を変更している場合は bridge 側にも指定してください。選択中 client の Client Network Variables を全削除するときに使用します。
+
+```bash
+./start_bridge_server.sh --rest-api-port 8800
+```
+
 ## コンソール機能
 
 - 参加者一覧のリアルタイム表示
@@ -137,6 +143,7 @@ HTTP 配信を無効にして WebSocket bridge だけ起動する場合:
 - pose 受信状態表示
 - Global Network Variable の表示と設定
 - Client Network Variable の表示と設定
+- 選択中 client の Client Network Variables 全削除
 - 選択中参加者への RPC 送信
 - 自動スケーリング付きの簡易 top-down map 表示
 - ダミーアバターの生成 / 削除

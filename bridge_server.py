@@ -23,6 +23,9 @@ import socket
 import threading
 import time
 from typing import Any, TypedDict
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlparse
+from urllib.request import Request, urlopen
 import uuid
 
 MISSING_RUNTIME_DEPENDENCIES: list[str] = []
@@ -86,6 +89,7 @@ DISCOVERY_REQUEST = "STYLY-NETSYNC-DISCOVER"
 DISCOVERY_RESPONSE_PREFIX = "STYLY-NETSYNC"
 DEFAULT_SERVER_DISCOVERY_PORT = 9999
 DEFAULT_HTTP_PORT = 8080
+DEFAULT_REST_API_PORT = 8800
 WEB_CLIENT_FILENAME = "NetSyncWebClient.html"
 DUMMY_SEND_INTERVAL_SEC = 0.1
 
@@ -936,11 +940,13 @@ class WebBridge:
     """Bridge between the NetSync ZeroMQ server and browser WebSocket clients."""
 
     def __init__(self, server_address="tcp://localhost",
-                 dealer_port=5555, sub_port=5556, room_id="default_room"):
+                 dealer_port=5555, sub_port=5556, room_id="default_room",
+                 rest_api_port=DEFAULT_REST_API_PORT):
         self.server_address = server_address
         self.dealer_port = dealer_port
         self.sub_port = sub_port
         self.room_id = room_id
+        self.rest_api_port = rest_api_port
         self.server_name = "Unknown Server"
         self.discovery_method = None
         self.ws_clients: dict[websockets.WebSocketServerProtocol, str] = {}
@@ -964,8 +970,7 @@ class WebBridge:
                 }
         elif msg["type"] == "client_var_sync":
             for cno_str, variables in msg["clientVariables"].items():
-                if cno_str not in self.client_variables:
-                    self.client_variables[cno_str] = {}
+                self.client_variables[cno_str] = {}
                 for v in variables:
                     self.client_variables[cno_str][v["name"]] = {
                         "value": v["value"],
@@ -1009,6 +1014,7 @@ class WebBridge:
                 "serverAddress": self.server_address,
                 "dealerPort": self.dealer_port,
                 "subPort": self.sub_port,
+                "restApiPort": self.rest_api_port,
                 "serverName": self.server_name,
                 "discoveryMethod": self.discovery_method,
             }
@@ -1051,6 +1057,50 @@ class WebBridge:
             f"[Bridge] Discovered NetSync server '{self.server_name}' at {self.server_address} "
             f"(dealer:{self.dealer_port}, sub:{self.sub_port}, via {self.discovery_method})"
         )
+
+    def _get_rest_api_base_url(self) -> str:
+        """Build the NetSync REST API base URL from the active server endpoint."""
+        parsed = urlparse(self.server_address)
+        host = parsed.hostname
+        if not host:
+            host = self.server_address.removeprefix("tcp://").split(":")[0] or "127.0.0.1"
+        if host == "localhost":
+            host = "127.0.0.1"
+        return f"http://{host}:{self.rest_api_port}"
+
+    def _find_device_id_for_client(self, client_no: int) -> str | None:
+        """Return the mapped device ID for a client number."""
+        for mapping in self.id_mappings:
+            if int(mapping.get("clientNo") or 0) == client_no:
+                device_id = mapping.get("deviceId") or ""
+                return device_id or None
+        return None
+
+    def _delete_client_variables_via_rest(self, client_no: int, device_id: str) -> dict[str, Any]:
+        """Delete all client variables through the NetSync REST API."""
+        room_id = quote(self.room_id, safe="")
+        encoded_device_id = quote(device_id, safe="")
+        url = (
+            f"{self._get_rest_api_base_url()}/v1/rooms/{room_id}/devices/"
+            f"{encoded_device_id}/client-variables"
+        )
+        request = Request(url, method="DELETE")
+        try:
+            with urlopen(request, timeout=5.0) as response:
+                body = response.read().decode("utf-8")
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"REST DELETE failed ({exc.code}): {detail}") from exc
+        except URLError as exc:
+            raise RuntimeError(f"REST API unavailable: {exc.reason}") from exc
+
+        data = json.loads(body) if body else {}
+        deleted_count = int(data.get("deletedCount", 0))
+        return {
+            "clientNo": int(data.get("clientNo") or client_no),
+            "deviceId": device_id,
+            "deletedCount": deleted_count,
+        }
 
     async def _broadcast_to_all(self, message: str) -> None:
         """Send a JSON string to all connected WebSocket clients."""
@@ -1206,6 +1256,52 @@ class WebBridge:
             float(msg.get("z", 0.0)),
         )
 
+    async def _on_clear_client_vars(self, msg: dict[str, Any], dealer, room: bytes, ws) -> None:
+        """Delete all client variables for a selected mapped client via REST."""
+        del dealer, room
+        client_no = int(msg.get("targetClientNo", 0))
+        if client_no <= 0:
+            raise ValueError("targetClientNo must be positive")
+
+        device_id = self._find_device_id_for_client(client_no)
+        if not device_id:
+            await ws.send(json.dumps({
+                "type": "client_vars_clear_result",
+                "ok": False,
+                "clientNo": client_no,
+                "message": "No deviceId mapping for selected client",
+            }))
+            return
+
+        try:
+            result = await asyncio.to_thread(
+                self._delete_client_variables_via_rest,
+                client_no,
+                device_id,
+            )
+        except RuntimeError as exc:
+            await ws.send(json.dumps({
+                "type": "client_vars_clear_result",
+                "ok": False,
+                "clientNo": client_no,
+                "deviceId": device_id,
+                "message": str(exc),
+            }))
+            return
+
+        cno_str = str(result["clientNo"])
+        self.client_variables[cno_str] = {}
+        clear_sync = {
+            "type": "client_var_sync",
+            "clientVariables": {cno_str: []},
+        }
+        await self._broadcast_to_all(json.dumps(clear_sync))
+        await ws.send(json.dumps({
+            "type": "client_vars_clear_result",
+            "ok": True,
+            **result,
+        }))
+
     async def _on_object_pose(self, msg: dict[str, Any], dealer, room: bytes, ws) -> None:
         """Send an object pose update to the NetSync server."""
         del ws
@@ -1335,12 +1431,19 @@ if __name__ == "__main__":
     parser.add_argument("--ws-port", type=int, default=8765)
     parser.add_argument("--http-host", default="0.0.0.0")
     parser.add_argument("--http-port", type=int, default=DEFAULT_HTTP_PORT)
+    parser.add_argument("--rest-api-port", type=int, default=DEFAULT_REST_API_PORT)
     parser.add_argument("--no-http", action="store_true")
     args = parser.parse_args()
 
     ensure_runtime_dependencies()
 
-    bridge = WebBridge(args.server, args.dealer_port, args.sub_port, args.room)
+    bridge = WebBridge(
+        args.server,
+        args.dealer_port,
+        args.sub_port,
+        args.room,
+        rest_api_port=args.rest_api_port,
+    )
     try:
         asyncio.run(
             bridge.run(
