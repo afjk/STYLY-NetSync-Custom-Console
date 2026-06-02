@@ -4,7 +4,7 @@
 # dependencies = [
 #   "pyzmq",
 #   "websockets",
-#   "styly-netsync-server>=0.11.0",
+#   "styly-netsync-server>=0.14.0",
 # ]
 # ///
 #
@@ -198,6 +198,7 @@ def _adapt_room_pose(raw: dict) -> dict:
         xr_origin_delta = {}
         for src, dst in (
             ("xrOriginDeltaX", "x"),
+            ("xrOriginDeltaY", "y"),
             ("xrOriginDeltaZ", "z"),
             ("xrOriginDeltaYaw", "yaw"),
         ):
@@ -250,13 +251,14 @@ def _adapt_id_mapping(raw: dict) -> dict:
 
 def _adapt_global_var_sync(raw: dict) -> dict:
     """Adapt upstream global variable sync payloads into browser JSON."""
+    received_at = time.time()
     return {
         "type": "global_var_sync",
         "variables": [
             {
                 "name": variable.get("name", ""),
                 "value": variable.get("value", ""),
-                "timestamp": variable.get("timestamp", 0.0),
+                "timestamp": variable.get("timestamp", received_at),
                 "lastWriter": variable.get("lastWriterClientNo", 0),
             }
             for variable in raw.get("variables", [])
@@ -266,6 +268,7 @@ def _adapt_global_var_sync(raw: dict) -> dict:
 
 def _adapt_client_var_sync(raw: dict) -> dict:
     """Adapt upstream client variable sync payloads into browser JSON."""
+    received_at = time.time()
     return {
         "type": "client_var_sync",
         "clientVariables": {
@@ -273,7 +276,7 @@ def _adapt_client_var_sync(raw: dict) -> dict:
                 {
                     "name": variable.get("name", ""),
                     "value": variable.get("value", ""),
-                    "timestamp": variable.get("timestamp", 0.0),
+                    "timestamp": variable.get("timestamp", received_at),
                     "lastWriter": variable.get("lastWriterClientNo", 0),
                 }
                 for variable in variables
@@ -804,6 +807,7 @@ class DummyAvatar:
         )
         wire = client_transform_to_wire(transform)
         wire["xrOriginDeltaX"] = head_x - self.phys_x
+        wire["xrOriginDeltaY"] = head_y
         wire["xrOriginDeltaZ"] = head_z - self.phys_z
         wire["xrOriginDeltaYaw"] = 0.0
 

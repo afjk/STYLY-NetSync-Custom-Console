@@ -19,6 +19,7 @@ GitHub Pages: https://afjk.github.io/STYLY-NetSync-Custom-Console/
 
 - Python 3
 - `uv` 推奨
+- STYLY NetSync Server `0.14.0` 以降
 
 `uv` が使える場合、`start_bridge_server.sh` は `bridge_server.py` を uv script として実行し、必要な Python 依存関係を自動で用意します。
 
@@ -26,11 +27,18 @@ GitHub Pages: https://afjk.github.io/STYLY-NetSync-Custom-Console/
 
 - `pyzmq`
 - `websockets`
+- `styly-netsync-server>=0.14.0`
 
 `uv` を使わない場合は手動でインストールしてください。
 
 ```bash
-python3 -m pip install pyzmq websockets
+python3 -m pip install pyzmq websockets "styly-netsync-server>=0.14.0"
+```
+
+Unity package と NetSync Server は同じバージョンを使ってください。STYLY NetSync `0.14.0` の server は以下で起動できます。
+
+```bash
+uvx styly-netsync-server@0.14.0
 ```
 
 ## 起動
