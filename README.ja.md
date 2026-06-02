@@ -19,6 +19,7 @@ GitHub Pages: https://afjk.github.io/STYLY-NetSync-Custom-Console/
 
 - Python 3
 - `uv` 推奨
+- STYLY NetSync Server `0.14.0` 以降
 
 `uv` が使える場合、`start_bridge_server.sh` は `bridge_server.py` を uv script として実行し、必要な Python 依存関係を自動で用意します。
 
@@ -26,11 +27,18 @@ GitHub Pages: https://afjk.github.io/STYLY-NetSync-Custom-Console/
 
 - `pyzmq`
 - `websockets`
+- `styly-netsync-server>=0.14.0`
 
 `uv` を使わない場合は手動でインストールしてください。
 
 ```bash
-python3 -m pip install pyzmq websockets
+python3 -m pip install pyzmq websockets "styly-netsync-server>=0.14.0"
+```
+
+Unity package と NetSync Server は同じバージョンを使ってください。STYLY NetSync `0.14.0` の server は以下で起動できます。
+
+```bash
+uvx styly-netsync-server@0.14.0
 ```
 
 ## 起動
@@ -121,6 +129,12 @@ HTTP 配信を無効にして WebSocket bridge だけ起動する場合:
 ./start_bridge_server.sh --no-http
 ```
 
+NetSync Server の REST API port を変更している場合は bridge 側にも指定してください。選択中 client の Client Network Variables を全削除するときに使用します。
+
+```bash
+./start_bridge_server.sh --rest-api-port 8800
+```
+
 ## コンソール機能
 
 - 参加者一覧のリアルタイム表示
@@ -129,6 +143,7 @@ HTTP 配信を無効にして WebSocket bridge だけ起動する場合:
 - pose 受信状態表示
 - Global Network Variable の表示と設定
 - Client Network Variable の表示と設定
+- 選択中 client の Client Network Variables 全削除
 - 選択中参加者への RPC 送信
 - 自動スケーリング付きの簡易 top-down map 表示
 - ダミーアバターの生成 / 削除

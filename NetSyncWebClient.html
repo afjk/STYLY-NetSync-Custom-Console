@@ -28,6 +28,12 @@
   button:hover { background: #2a3342; }
   button.primary { background: #2367d1; border-color: #2b74df; }
   button.primary:hover { background: #2b74df; }
+  button.danger { background: #3a1e25; border-color: #77323e; color: #ffd8de; }
+  button.danger:hover { background: #4a2630; }
+  button:disabled {
+    opacity: .45;
+    cursor: not-allowed;
+  }
   input, select {
     min-width: 0;
     border: 1px solid #303846;
@@ -313,10 +319,22 @@
     margin-top: 14px;
   }
   .vars h3 {
-    margin: 0 0 8px;
+    margin: 0;
     color: #aab4c0;
     font-size: 12px;
     font-weight: 650;
+  }
+  .vars-head {
+    min-height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .vars-head button {
+    padding: 5px 9px;
+    font-size: 11px;
   }
   .editor {
     display: grid;
@@ -1434,6 +1452,14 @@ function handleVariableAction(event) {
     return true;
   }
 
+  const clientClearAllButton = event.target.closest(".client-vars-clear-all-btn");
+  if (clientClearAllButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    clearClientVars(Number(clientClearAllButton.dataset.clientNo));
+    return true;
+  }
+
   const globalSetButton = event.target.closest(".global-var-set-btn");
   if (globalSetButton) {
     event.preventDefault();
@@ -1513,6 +1539,7 @@ function renderDetail() {
   const pose = clients[cno] || {};
   const vars = clientVars[cno] || {};
   const head = pose.head?.pos;
+  const canClearClientVars = !!mapping.deviceId;
   title.textContent = `Client #${cno}`;
 
   let html = "";
@@ -1521,7 +1548,11 @@ function renderDetail() {
   html += detailKv("Type", mapping.stealth ? "stealth" : "standard");
   html += detailKv("Pose", pose.head ? "active" : "-");
   html += detailKv("Head", head ? `x ${head.x.toFixed(3)}, y ${head.y.toFixed(3)}, z ${head.z.toFixed(3)}` : "-");
-  html += `<div class="vars"><h3>Client Variables</h3>`;
+  html += `<div class="vars">
+    <div class="vars-head">
+      <h3>Client Variables</h3>
+      <button type="button" class="client-vars-clear-all-btn danger" data-client-no="${esc(cno)}" ${canClearClientVars ? "" : "disabled"}>Clear All</button>
+    </div>`;
 
   const names = Object.keys(vars).sort();
   if (names.length === 0) {
@@ -1625,12 +1656,20 @@ function handleGlobalVarSync(msg) {
 
 function handleClientVarSync(msg) {
   for (const [cno, vars] of Object.entries(msg.clientVariables || {})) {
-    if (!AppState.clientVars[cno]) AppState.clientVars[cno] = {};
+    AppState.clientVars[cno] = {};
     for (const v of vars) {
       AppState.clientVars[cno][v.name] = { value: v.value, timestamp: v.timestamp, lastWriter: v.lastWriter };
     }
   }
   renderAll();
+}
+
+function handleClientVarsClearResult(msg) {
+  if (msg.ok) {
+    toast(`Cleared client #${msg.clientNo} variables`);
+    return;
+  }
+  toast(msg.message || "Client variables clear failed", true, 6000);
 }
 
 function syncDummySelectionBounds() {
@@ -1677,6 +1716,7 @@ const messageHandlers = {
   nv_snapshot: handleNvSnapshot,
   dummy_status: handleDummyStatus,
   dummy_list: handleDummyList,
+  client_vars_clear_result: handleClientVarsClearResult,
   rpc: handleRpc,
 };
 
@@ -1764,6 +1804,31 @@ function clearClientVarValue(targetClientNo, name) {
     return;
   }
   setClientVarValue(targetClientNo, name, "");
+}
+
+function clearClientVars(targetClientNo) {
+  if (!ws || ws.readyState !== 1) {
+    toast("Not connected", true);
+    return;
+  }
+  if (!targetClientNo) {
+    toast("Client required", true);
+    return;
+  }
+  const mapping = AppState.idMappings[targetClientNo] || {};
+  if (!mapping.deviceId) {
+    toast("Device ID mapping required", true);
+    return;
+  }
+  const variableCount = Object.keys(AppState.clientVars[targetClientNo] || {}).length;
+  if (!window.confirm(`Clear all Client Variables for client #${targetClientNo}? (${variableCount})`)) {
+    return;
+  }
+  ws.send(JSON.stringify({ action: "clear_client_vars", targetClientNo }));
+  AppState.clientVars[targetClientNo] = {};
+  preserveDetailRenderUntil = 0;
+  renderAll();
+  toast("Client variables clear requested");
 }
 
 function setClientVar(targetClientNo) {

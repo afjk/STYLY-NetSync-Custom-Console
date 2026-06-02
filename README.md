@@ -19,16 +19,24 @@ GitHub Pages: https://afjk.github.io/STYLY-NetSync-Custom-Console/
 
 - Python 3
 - `uv` recommended
+- STYLY NetSync Server `0.14.0` or later
 
 When `uv` is available, `start_bridge_server.sh` runs `bridge_server.py` as a uv script and installs the required Python dependencies automatically:
 
 - `pyzmq`
 - `websockets`
+- `styly-netsync-server>=0.14.0`
 
 Without `uv`, install dependencies manually:
 
 ```bash
-python3 -m pip install pyzmq websockets
+python3 -m pip install pyzmq websockets "styly-netsync-server>=0.14.0"
+```
+
+Use the same STYLY NetSync server version as the Unity package. For STYLY NetSync `0.14.0`, start the server with:
+
+```bash
+uvx styly-netsync-server@0.14.0
 ```
 
 ## Start
@@ -119,6 +127,12 @@ Disable HTTP serving if you only want the WebSocket bridge:
 ./start_bridge_server.sh --no-http
 ```
 
+If the NetSync Server REST API uses a non-default port, pass it to the bridge. This is used when clearing all Client Network Variables for a selected client from the console:
+
+```bash
+./start_bridge_server.sh --rest-api-port 8800
+```
+
 ## Console Features
 
 - live participant grid
@@ -127,6 +141,7 @@ Disable HTTP serving if you only want the WebSocket bridge:
 - pose activity display
 - global Network Variable display and set
 - client Network Variable display and set
+- clear all Client Network Variables for a selected client
 - RPC send from selected client detail
 - simple top-down map view with auto scaling
 - dummy avatar spawn / despawn controls
