@@ -4,7 +4,7 @@
 # dependencies = [
 #   "pyzmq",
 #   "websockets",
-#   "styly-netsync-server>=0.14.0",
+#   "styly-netsync-server>=0.16.0",
 # ]
 # ///
 #
@@ -44,7 +44,7 @@ except ModuleNotFoundError:
     MISSING_RUNTIME_DEPENDENCIES.append("websockets")
 
 try:
-    from styly_netsync.adapters import client_transform_to_wire, create_stealth_transform
+    from styly_netsync.adapters import client_transform_to_wire
     from styly_netsync.binary_serializer import (
         MSG_CLIENT_VAR_SYNC,
         MSG_DEVICE_ID_MAPPING,
@@ -60,6 +60,7 @@ try:
         POSE_FLAG_RIGHT_VALID,
         POSE_FLAG_VIRTUALS_VALID,
         deserialize,
+        serialize_client_hello,
         serialize_client_transform,
         serialize_client_var_set,
         serialize_global_var_set,
@@ -69,8 +70,8 @@ try:
     from styly_netsync.types import client_transform_data, transform_data
 except ModuleNotFoundError:
     client_transform_to_wire = None
-    create_stealth_transform = None
     deserialize = None
+    serialize_client_hello = None
     serialize_client_transform = None
     serialize_client_var_set = None
     serialize_global_var_set = None
@@ -86,8 +87,9 @@ except ModuleNotFoundError:
     MISSING_RUNTIME_DEPENDENCIES.append("styly-netsync-server")
 
 DISCOVERY_REQUEST = "STYLY-NETSYNC-DISCOVER"
-DISCOVERY_RESPONSE_PREFIX = "STYLY-NETSYNC"
+DISCOVERY_RESPONSE_PREFIX = "STYLY-NETSYNC2"
 DEFAULT_SERVER_DISCOVERY_PORT = 9999
+TRANSFORM_PORT_OFFSET = 2
 DEFAULT_HTTP_PORT = 8080
 DEFAULT_REST_API_PORT = 8800
 WEB_CLIENT_FILENAME = "NetSyncWebClient.html"
@@ -375,11 +377,14 @@ def deserialize_sub_message(topic: bytes, payload: bytes) -> dict | None:
 # Serialization Helpers
 # ---------------------------------------------------------------------------
 
-def make_stealth_handshake(device_id: str) -> bytes:
-    """Create a stealth handshake payload using the upstream serializer."""
-    tx = create_stealth_transform()
-    tx.device_id = device_id
-    return serialize_client_transform(client_transform_to_wire(tx))
+def make_client_hello(device_id: str, is_stealth: bool = True) -> bytes:
+    """Create a client hello payload that binds the control-lane identity.
+
+    Protocol v8 (NetSync 0.16.0) registers room membership over the control lane
+    with MSG_CLIENT_HELLO instead of a stealth client transform. Stealth clients
+    re-send this periodically to keep their membership alive.
+    """
+    return serialize_client_hello(device_id, is_stealth=is_stealth)
 
 
 def make_rpc(
@@ -387,11 +392,13 @@ def make_rpc(
     args: list[str],
     sender_client_no: int = 0,
     target_client_nos: list[int] | None = None,
+    device_id: str = "",
 ) -> bytes:
     """Create an RPC payload using the upstream serializer."""
     return serialize_rpc_message(
         {
             "senderClientNo": sender_client_no,
+            "deviceId": device_id,
             "targetClientNos": target_client_nos or [],
             "functionName": function_name,
             "argumentsJson": json.dumps(args),
@@ -399,11 +406,12 @@ def make_rpc(
     )
 
 
-def make_global_var_set(sender_client_no: int, name: str, value: str) -> bytes:
+def make_global_var_set(sender_client_no: int, device_id: str, name: str, value: str) -> bytes:
     """Create a global variable set payload using the upstream serializer."""
     return serialize_global_var_set(
         {
             "senderClientNo": sender_client_no,
+            "deviceId": device_id,
             "variableName": name,
             "variableValue": value,
             "timestamp": time.time(),
@@ -413,6 +421,7 @@ def make_global_var_set(sender_client_no: int, name: str, value: str) -> bytes:
 
 def make_client_var_set(
     sender_client_no: int,
+    device_id: str,
     target_client_no: int,
     name: str,
     value: str,
@@ -421,6 +430,7 @@ def make_client_var_set(
     return serialize_client_var_set(
         {
             "senderClientNo": sender_client_no,
+            "deviceId": device_id,
             "targetClientNo": target_client_no,
             "variableName": name,
             "variableValue": value,
@@ -473,20 +483,27 @@ def get_broadcast_addresses(local_ips: list[str]) -> list[str]:
 
 
 def parse_discovery_response(data: bytes, sender_ip: str) -> dict | None:
-    """Parse one discovery response packet."""
+    """Parse one discovery response packet (STYLY-NETSYNC2 format).
+
+    Wire format: ``STYLY-NETSYNC2|controlPort|transformPort|pubPort|serverName``
+    Legacy ``STYLY-NETSYNC|...`` responses come from servers older than 0.16.0,
+    which speak an incompatible protocol, so they are intentionally ignored.
+    """
     try:
         message = data.decode("utf-8").strip()
         parts = message.split("|")
-        if len(parts) < 3 or parts[0] != DISCOVERY_RESPONSE_PREFIX:
+        if len(parts) < 5 or parts[0] != DISCOVERY_RESPONSE_PREFIX:
             return None
 
-        dealer_port = int(parts[1])
-        sub_port = int(parts[2])
-        server_name = parts[3] if len(parts) >= 4 and parts[3] else "Unknown Server"
+        control_port = int(parts[1])
+        transform_port = int(parts[2])
+        sub_port = int(parts[3])
+        server_name = parts[4] if parts[4] else "Unknown Server"
 
         return {
             "serverAddress": f"tcp://{sender_ip}",
-            "dealerPort": dealer_port,
+            "dealerPort": control_port,
+            "transformPort": transform_port,
             "subPort": sub_port,
             "serverName": server_name,
         }
@@ -665,9 +682,12 @@ class DummyAvatar:
     def __init__(self, bridge: "WebBridge", start_x: float, start_z: float) -> None:
         self.bridge = bridge
         self.device_id = f"dummy-{uuid.uuid4().hex[:12]}"
+        # Protocol v8: client poses go on the transform lane. A pose-only client
+        # is registered by the server from its transform stream alone (no hello),
+        # so the dummy never touches the control lane.
         self.socket: zmq.asyncio.Socket | None = bridge.ctx.socket(zmq.DEALER)
         self.socket.setsockopt(zmq.LINGER, 0)
-        self.socket.connect(f"{bridge.server_address}:{bridge.dealer_port}")
+        self.socket.connect(f"{bridge.server_address}:{bridge.transform_port}")
         self.pose_seq = 0
         self.targets: list[tuple[float, float]] = []
         self.phys_x = start_x
@@ -941,9 +961,15 @@ class WebBridge:
 
     def __init__(self, server_address="tcp://localhost",
                  dealer_port=5555, sub_port=5556, room_id="default_room",
-                 rest_api_port=DEFAULT_REST_API_PORT):
+                 rest_api_port=DEFAULT_REST_API_PORT, transform_port=None):
         self.server_address = server_address
+        # dealer_port is the control lane (RPC, NV, hello); transform_port is the
+        # pose lane. When unset it follows the server default of control + 2.
         self.dealer_port = dealer_port
+        self.transform_port = (
+            transform_port if transform_port is not None
+            else dealer_port + TRANSFORM_PORT_OFFSET
+        )
         self.sub_port = sub_port
         self.room_id = room_id
         self.rest_api_port = rest_api_port
@@ -1013,6 +1039,7 @@ class WebBridge:
             "netSync": {
                 "serverAddress": self.server_address,
                 "dealerPort": self.dealer_port,
+                "transformPort": self.transform_port,
                 "subPort": self.sub_port,
                 "restApiPort": self.rest_api_port,
                 "serverName": self.server_name,
@@ -1024,6 +1051,9 @@ class WebBridge:
         """Apply discovery results to the active bridge configuration."""
         self.server_address = discovered["serverAddress"]
         self.dealer_port = discovered["dealerPort"]
+        self.transform_port = discovered.get(
+            "transformPort", self.dealer_port + TRANSFORM_PORT_OFFSET
+        )
         self.sub_port = discovered["subPort"]
         self.server_name = discovered.get("serverName", "Unknown Server")
         self.discovery_method = discovered.get("discoveryMethod")
@@ -1037,7 +1067,8 @@ class WebBridge:
         if not should_discover:
             print(
                 f"[Bridge] Using NetSync server {self.server_address} "
-                f"(dealer:{self.dealer_port}, sub:{self.sub_port})"
+                f"(control:{self.dealer_port}, transform:{self.transform_port}, "
+                f"sub:{self.sub_port})"
             )
             return
 
@@ -1055,7 +1086,8 @@ class WebBridge:
         self.configure_discovered_server(discovered)
         print(
             f"[Bridge] Discovered NetSync server '{self.server_name}' at {self.server_address} "
-            f"(dealer:{self.dealer_port}, sub:{self.sub_port}, via {self.discovery_method})"
+            f"(control:{self.dealer_port}, transform:{self.transform_port}, "
+            f"sub:{self.sub_port}, via {self.discovery_method})"
         )
 
     def _get_rest_api_base_url(self) -> str:
@@ -1178,26 +1210,30 @@ class WebBridge:
 
     async def _on_rpc(self, msg: dict[str, Any], dealer, room: bytes, ws) -> None:
         """Send an RPC message to the NetSync server."""
-        del ws
         payload = make_rpc(
             msg["functionName"],
             msg.get("args", []),
             msg.get("senderClientNo", 0),
             msg.get("targetClientNos"),
+            device_id=self.ws_clients.get(ws, ""),
         )
         await dealer.send_multipart([room, payload])
 
     async def _on_set_global_var(self, msg: dict[str, Any], dealer, room: bytes, ws) -> None:
         """Send a global variable update to the NetSync server."""
-        del ws
-        payload = make_global_var_set(msg.get("senderClientNo", 0), msg["name"], msg["value"])
+        payload = make_global_var_set(
+            msg.get("senderClientNo", 0),
+            self.ws_clients.get(ws, ""),
+            msg["name"],
+            msg["value"],
+        )
         await dealer.send_multipart([room, payload])
 
     async def _on_set_client_var(self, msg: dict[str, Any], dealer, room: bytes, ws) -> None:
         """Send a client variable update to the NetSync server."""
-        del ws
         payload = make_client_var_set(
             msg.get("senderClientNo", 0),
+            self.ws_clients.get(ws, ""),
             msg["targetClientNo"],
             msg["name"],
             msg["value"],
@@ -1303,7 +1339,13 @@ class WebBridge:
         }))
 
     async def _on_object_pose(self, msg: dict[str, Any], dealer, room: bytes, ws) -> None:
-        """Send an object pose update to the NetSync server."""
+        """Send an object pose update to the NetSync server.
+
+        NOTE: not wired to any shipped UI. Under protocol v8 object poses belong
+        on the transform lane and must carry a ``deviceId``; this stealth web
+        client only holds a control-lane DEALER, so reviving this would need a
+        transform socket and ``deviceId`` in ``msg`` (see make_client_hello).
+        """
         del ws
         payload = serialize_object_pose(msg)
         await dealer.send_multipart([room, payload])
@@ -1326,17 +1368,19 @@ class WebBridge:
         dealer.setsockopt(zmq.LINGER, 0)
         dealer.connect(f"{self.server_address}:{self.dealer_port}")
 
-        handshake = make_stealth_handshake(device_id)
-        await dealer.send_multipart([self.room_id.encode("utf-8"), handshake])
-        print(f"[DEALER] Sent stealth handshake for {device_id}")
+        hello = make_client_hello(device_id, is_stealth=True)
+        await dealer.send_multipart([self.room_id.encode("utf-8"), hello])
+        print(f"[DEALER] Sent stealth client hello for {device_id}")
 
         await ws.send(self._build_snapshot())
 
         async def keepalive():
+            # Stealth clients send no poses, so they must re-announce membership
+            # on the control lane before the server's client_timeout (5s) elapses.
             while ws in self.ws_clients:
                 await asyncio.sleep(2.0)
                 try:
-                    hs = make_stealth_handshake(device_id)
+                    hs = make_client_hello(device_id, is_stealth=True)
                     await dealer.send_multipart([self.room_id.encode("utf-8"), hs])
                 except Exception:
                     break
@@ -1421,7 +1465,10 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--server", default="auto")
-    parser.add_argument("--dealer-port", type=int, default=5555)
+    parser.add_argument("--dealer-port", type=int, default=5555,
+                        help="NetSync control lane port (RPC, NV, hello)")
+    parser.add_argument("--transform-port", type=int, default=None,
+                        help="NetSync transform lane port (default: control port + 2)")
     parser.add_argument("--sub-port", type=int, default=5556)
     parser.add_argument("--discover", action="store_true")
     parser.add_argument("--server-discovery-port", type=int, default=DEFAULT_SERVER_DISCOVERY_PORT)
@@ -1443,6 +1490,7 @@ if __name__ == "__main__":
         args.sub_port,
         args.room,
         rest_api_port=args.rest_api_port,
+        transform_port=args.transform_port,
     )
     try:
         asyncio.run(

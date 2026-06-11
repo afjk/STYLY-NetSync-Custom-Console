@@ -19,25 +19,32 @@ GitHub Pages: https://afjk.github.io/STYLY-NetSync-Custom-Console/
 
 - Python 3
 - `uv` recommended
-- STYLY NetSync Server `0.14.0` or later
+- STYLY NetSync Server `0.16.0` or later
 
 When `uv` is available, `start_bridge_server.sh` runs `bridge_server.py` as a uv script and installs the required Python dependencies automatically:
 
 - `pyzmq`
 - `websockets`
-- `styly-netsync-server>=0.14.0`
+- `styly-netsync-server>=0.16.0`
 
 Without `uv`, install dependencies manually:
 
 ```bash
-python3 -m pip install pyzmq websockets "styly-netsync-server>=0.14.0"
+python3 -m pip install pyzmq websockets "styly-netsync-server>=0.16.0"
 ```
 
-Use the same STYLY NetSync server version as the Unity package. For STYLY NetSync `0.14.0`, start the server with:
+Use the same STYLY NetSync server version as the Unity package. For STYLY NetSync `0.16.0`, start the server with:
 
 ```bash
-uvx styly-netsync-server@0.14.0
+uvx styly-netsync-server@0.16.0
 ```
+
+> STYLY NetSync `0.16.0` (protocol v8) splits control and transform traffic onto
+> separate ports: a control port (`5555`, RPC / Network Variables / hello) and a
+> transform port (`5557`, client and object poses). The bridge discovers both
+> automatically; when specifying the server manually it derives the transform
+> port as control port + 2 (override with `--transform-port`). Servers older
+> than `0.16.0` use an incompatible protocol and are not supported.
 
 ## Start
 
